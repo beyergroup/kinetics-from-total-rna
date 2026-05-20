@@ -204,7 +204,7 @@ process FitGlobalSplicingModel {
 
     output:
     path("model_parameters.tsv"), emit: model_parameters
-    path("test_results.tsv"), emit: test_results
+    path("test_results_raw.tsv"), emit: test_results
 
     publishDir "${params.outdir}/${modeling_output_subfolder}/${model_run_id}/global_splicing_model", mode: 'copy'
 
@@ -218,6 +218,7 @@ process FitGlobalSplicingModel {
     --lrt_metadata ${lrt_metadata} \
     --reduced_matrices_folder ${reduced_matrices_folder} \
     --coverage_data_folder .
+    mv test_results.tsv test_results_raw.tsv
     """
 }
 
@@ -238,7 +239,7 @@ process FitGlobalPol2Model {
 
     output:
     path("model_parameters.tsv"), emit: model_parameters
-    path("test_results.tsv"), emit: test_results
+    path("test_results_raw.tsv"), emit: test_results
 
     publishDir "${params.outdir}/${modeling_output_subfolder}/${model_run_id}/global_pol2_model", mode: 'copy'
 
@@ -256,6 +257,7 @@ process FitGlobalPol2Model {
     --coverage_data_folder . \
     --lrt_metadata ${lrt_metadata} \
     --reduced_matrices_folder ${reduced_matrices_folder}
+    mv test_results.tsv test_results_raw.tsv
     """
 }
 

@@ -461,6 +461,44 @@ class GlobalPol2Model(nn.Module):
 
         return safe_exp(predicted_log_reads_exon), predicted_reads_intron, pi
 
+    def get_param_df(self) -> pd.DataFrame:
+        parameter_data: list[dict] = []
+        for gene_index, gene_name in enumerate(self.gene_names):
+            parameter_data.append({
+                'parameter_type': 'intercept_exon',
+                'gene_name': gene_name,
+                'feature_name': None,
+                'intron_name': None,
+                'value': self.intercept_exon[gene_index].item(),
+            })
+            for feature_index, feature_name in enumerate(self.feature_names):
+                parameter_data.append({
+                    'parameter_type': 'alpha',
+                    'gene_name': gene_name,
+                    'feature_name': feature_name,
+                    'intron_name': None,
+                    'value': self.alpha[gene_index, feature_index].item(),
+                })
+        for feature_index, feature_name in enumerate(self.feature_names):
+            for param_name in ('beta', 'gamma'):
+                parameter_data.append({
+                    'parameter_type': param_name,
+                    'gene_name': None,
+                    'feature_name': feature_name,
+                    'intron_name': None,
+                    'value': getattr(self, param_name)[feature_index].item(),
+                })
+        for intron_index, intron_name in enumerate(self.intron_names):
+            for param_name in ('intercept_intron', 'theta'):
+                parameter_data.append({
+                    'parameter_type': param_name,
+                    'gene_name': None,
+                    'feature_name': None,
+                    'intron_name': intron_name,
+                    'value': getattr(self, param_name)[intron_index].item(),
+                })
+        return pd.DataFrame(parameter_data)
+
 
 class CoverageLoss(nn.Module):
 
