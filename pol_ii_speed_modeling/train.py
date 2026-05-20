@@ -607,20 +607,10 @@ def get_global_pol2_model_results(
     )
 
     feature_names = dataset_metadata.feature_names
-    param_rows: list[dict] = []
-    for param_name in ('beta', 'gamma'):
-        param_val = getattr(model, param_name).detach()
-        for feature_index, feature_name in enumerate(feature_names):
-            param_rows.append({
-                'parameter_type': param_name,
-                'feature_name': feature_name,
-                'intron_name': None,
-                'value': param_val[feature_index].item(),
-                'loss_full_model': training_results.final_loss,
-                'training_diverged_full_model': training_results.training_diverged,
-                'training_converged_within_max_epochs_full_model': training_results.converged_within_max_epochs,
-            })
-    model_param_df = pd.DataFrame(param_rows)
+    model_param_df = model.get_param_df()
+    model_param_df['loss_full_model'] = training_results.final_loss
+    model_param_df['training_diverged_full_model'] = training_results.training_diverged
+    model_param_df['training_converged_within_max_epochs_full_model'] = training_results.converged_within_max_epochs
 
     test_results_list: list[dict] = []
     for _, lrt_row in dataset_metadata.lrt_metadata.iterrows():

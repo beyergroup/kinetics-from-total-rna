@@ -204,7 +204,7 @@ process FitGlobalSplicingModel {
 
     output:
     path("model_parameters.tsv"), emit: model_parameters
-    path("test_results.tsv"), emit: test_results
+    path("test_results_raw.tsv"), emit: test_results
 
     publishDir "${params.outdir}/${modeling_output_subfolder}/${model_run_id}/global_splicing_model", mode: 'copy'
 
@@ -218,6 +218,7 @@ process FitGlobalSplicingModel {
     --lrt_metadata ${lrt_metadata} \
     --reduced_matrices_folder ${reduced_matrices_folder} \
     --coverage_data_folder .
+    mv test_results.tsv test_results_raw.tsv
     """
 }
 
@@ -238,7 +239,7 @@ process FitGlobalPol2Model {
 
     output:
     path("model_parameters.tsv"), emit: model_parameters
-    path("test_results.tsv"), emit: test_results
+    path("test_results_raw.tsv"), emit: test_results
 
     publishDir "${params.outdir}/${modeling_output_subfolder}/${model_run_id}/global_pol2_model", mode: 'copy'
 
@@ -256,6 +257,7 @@ process FitGlobalPol2Model {
     --coverage_data_folder . \
     --lrt_metadata ${lrt_metadata} \
     --reduced_matrices_folder ${reduced_matrices_folder}
+    mv test_results.tsv test_results_raw.tsv
     """
 }
 
@@ -367,9 +369,10 @@ process MergeRegularization {
     """
 }
 
-process PostprocessSplicingResultsAndPlot {
+process PostprocessResultsAndPlot {
     input:
     path raw_test_results
+    val model_type
     val model_type_subfolder
 
     output:
@@ -380,27 +383,30 @@ process PostprocessSplicingResultsAndPlot {
 
     script:
     """
-    postprocess_splicing_results.R \
+    postprocess_results.R \
     --test_results $raw_test_results \
+    --model_type $model_type \
     --output_folder test_results
     """
 }
 
-process PostprocessPol2ResultsAndPlot {
+process PostprocessGlobalResultsAndPlot {
     input:
-    path raw_test_results
+    path test_results
+    val model_type
     val model_type_subfolder
 
     output:
     path("test_results/test_results.tsv"), emit: test_results
-    path("test_results/volcano_plots/**")
+    path("test_results/plots/**")
 
     publishDir "${params.outdir}/${modeling_output_subfolder}/${model_run_id}/${model_type_subfolder}", mode: 'copy'
 
     script:
     """
-    postprocess_pol2_results.R \
-    --test_results $raw_test_results \
+    postprocess_global_results.R \
+    --test_results $test_results \
+    --model_type $model_type \
     --output_folder test_results
     """
 }
@@ -457,7 +463,7 @@ workflow pol2_model_subworkflow {
             model_subfolder
         )
 
-        PostprocessPol2ResultsAndPlot(merge_regularization_output.raw_test_results, model_subfolder)
+        PostprocessResultsAndPlot(merge_regularization_output.raw_test_results, 'pol2', model_subfolder)
 }
 
 
@@ -513,7 +519,7 @@ workflow intron_specific_pol2_model_subworkflow {
             model_subfolder
         )
 
-        PostprocessPol2ResultsAndPlot(merge_regularization_output.raw_test_results, model_subfolder)
+        PostprocessResultsAndPlot(merge_regularization_output.raw_test_results, 'pol2', model_subfolder)
 }
 
 
@@ -568,7 +574,7 @@ workflow gene_specific_splicing_model_subworkflow {
             model_subfolder
         )
 
-        PostprocessSplicingResultsAndPlot(merge_regularization_output.raw_test_results, model_subfolder)
+        PostprocessResultsAndPlot(merge_regularization_output.raw_test_results, 'splicing', model_subfolder)
 }
 
 
@@ -615,7 +621,7 @@ workflow intron_specific_splicing_model_subworkflow {
             model_subfolder
         )
 
-        PostprocessSplicingResultsAndPlot(merge_regularization_output.raw_test_results, model_subfolder)
+        PostprocessResultsAndPlot(merge_regularization_output.raw_test_results, 'splicing', model_subfolder)
 }
 
 
@@ -629,7 +635,9 @@ workflow global_splicing_model_subworkflow {
         coverage_files
 
     main:
-        FitGlobalSplicingModel(
+        def model_subfolder = 'global_splicing_model'
+
+        def fit_output = FitGlobalSplicingModel(
             modeled_introns
                 .combine(design_matrix)
                 .combine(lrt_metadata)
@@ -638,6 +646,8 @@ workflow global_splicing_model_subworkflow {
                 // Wrapping coverage_files in an extra list prevents unwanted flattening behavior in .combine()
                 .combine(coverage_files.map { file_list -> tuple([file_list]) })
         )
+
+        PostprocessGlobalResultsAndPlot(fit_output.test_results, 'global_splicing', model_subfolder)
 }
 
 
@@ -655,7 +665,9 @@ workflow global_pol2_model_subworkflow {
         coverage_files
 
     main:
-        FitGlobalPol2Model(
+        def model_subfolder = 'global_pol2_model'
+
+        def fit_output = FitGlobalPol2Model(
             modeled_genes
                 .combine(modeled_introns)
                 .combine(design_matrix)
@@ -668,6 +680,8 @@ workflow global_pol2_model_subworkflow {
                 // Wrapping coverage_files in an extra list prevents unwanted flattening behavior in .combine()
                 .combine(coverage_files.map { file_list -> tuple([file_list]) })
         )
+
+        PostprocessGlobalResultsAndPlot(fit_output.test_results, 'global_pol2', model_subfolder)
 }
 
 
