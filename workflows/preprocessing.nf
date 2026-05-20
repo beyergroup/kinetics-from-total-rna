@@ -490,7 +490,7 @@ workflow preprocessing_workflow {
         def tx2gene_out = PrepareTx2Gene(gtf_channel)
         def fai_index = CreateGenomeFastaIndex(genome_fasta_channel).genome_fai_file
 
-        def genomic_features = ExtractGenomicFeatures(gtf_channel, Channel.value(genomic_features_dir))
+        def genomic_features = ExtractGenomicFeatures(gtf_channel, Channel.value(genomic_features_dir ?: ''))
 
         def fastqc_out = samples.map{sample, fq1, fq2, strand, is_paired -> tuple(sample, fq1, fq2, is_paired)} | FastQC
         def fastqc_out_aggregated = fastqc_out.fastqc_reports.collect()
