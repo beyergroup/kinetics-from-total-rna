@@ -147,7 +147,7 @@ class Pol2Model(nn.Module):
                               gene_data: GeneData,
                               library_sizes: torch.Tensor,
                               design_matrix: torch.Tensor,
-                              pi_eps: float = 0.05,
+                              pi_eps: float = 0.01,
                               num_pi_grid_points: int = 20) -> None:
         with torch.no_grad():
             intercept_exon_scalar = torch.log(gene_data.exon_reads.mean() / library_sizes.mean())
@@ -273,7 +273,7 @@ class SplicingModel(nn.Module):
 
     def initialize_theta(self,
                          coverage: torch.Tensor,
-                         pi_eps: float = 0.05,
+                         pi_eps: float = 0.01,
                          num_pi_grid_points: int = 20) -> None:
         aggregated_coverage = coverage.sum(dim=0)
         pi_grid = torch.linspace(
@@ -388,7 +388,7 @@ class GlobalPol2Model(nn.Module):
                               global_gene_data: GlobalGeneData,
                               library_sizes: torch.Tensor,
                               design_matrix: torch.Tensor,
-                              pi_eps: float = 0.05,
+                              pi_eps: float = 0.01,
                               num_pi_grid_points: int = 20) -> None:
         with torch.no_grad():
             self.intercept_exon.data.copy_(
