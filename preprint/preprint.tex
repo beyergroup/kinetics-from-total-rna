@@ -14,7 +14,7 @@
 \graphicspath{{./figures/}}
 
 
-\title{Paper Title}
+\title{Estimating Relative Changes in RNA Polymerase II Elongation, Splicing, and RNA Degradation Kinetics from Total RNA-seq}
 
 \author[1,2]{Jakub Koubele\thanks{Correspondence: \texttt{jkoubele@uni-koeln.de}}}
 \author[1,2]{Andreas Beyer\thanks{Correspondence: \texttt{andreas.beyer@uni-koeln.de}}}
@@ -74,18 +74,25 @@
 		\caption{Schema of RNA metabolism.}
 		\label{fig:rna_metabolism_schema}
 	\end{figure}
+
+	Also discuss that RNA-seq data are compositional, which adds another layer of non-identifiability.
+
+	\section{Method}
+	Here will be detailed description of the mathematics behind.
+	\begin{enumerate}
+		\item ODE or PDE model of RNA metabolism
+		\item Statistical model (parametrized by LFCs)
+		
+	\end{enumerate}
+	Implementation notes (e.g. how we compute intron coverage, or that the whole stuff is implemented in PyTorch + Nextflow pipeline around) will be in 'Supplementary Methods'.
 		
 	\section{Results}
 	I will apply the model on some data, e.g. ENCODE datasets of stem cell differentiation, or degron mediated protein KD. Will plot and describe the results here. Should mainly serve for illustration, maybe e.g. mutations known to influence elongation speed (Drosophilla and C. Elegans data, maybe human cell lines if data are available).
 	
-	\section{Method}
-	Here will be detailed description of the mathematics behind, also implementation details (e.g. how we compute intron coverage).
-	Maybe break into 3 parts: 
-	\begin{enumerate}
-		\item ODE or PDE model of RNA metabolism
-		\item Statistical model (parametrized by LFCs)
-		\item Implementation notes (e.g. how we compute intron coverage, or that the whole stuff is implemented in PyTorch + Nextflow pipeline around)
-	\end{enumerate}
+	\section{Discussion}
+	Discuss stuff here.
+	
+	
 	
 	\section*{Code availability}
 	An implementation of our method is available at \url{https://github.com/jkoubele/pol-ii-speed}.
@@ -97,5 +104,9 @@
 	
 	
 	\bibliography{references}
+	
+	\newpage
+	\section*{Supplementary Methods}
+	Implementation details, more math details.
 	
 \end{document}
