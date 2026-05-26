@@ -37,15 +37,23 @@
 	
 	\section{Introduction}
 	\begin{itemize}
-		\item RNA metabolism is dynamic system, speed of reactions = kinetic rates. Kinetic rates are important:
+		\item RNA metabolism is dynamic system, speed of reactions = kinetic rates. Kinetic rates are important \citep{furlanDynamicsTranscriptionalPosttranscriptional2021}.
 		\begin{itemize}
-			\item For example, \citet{vockRNADecayCafeUniformlyProcessed2025} recently estimated that variability in RNA degradation rate explains at least 25\% of variability in transcript abundances between different human cell lines. 
+			\item For example, \citet{vockRNADecayCafeUniformlyProcessed2025} recently estimated that variability in RNA degradation rate explains at least 25\% of variability in transcript abundances between different human cell lines. In immune system, control of RNA decay plays an especially important regulatory role \citep{schottNetworksControllingMRNA2010}.
 			\item Transcription elongations speed also plays an important role in RNA metabolism. Changes in Pol II speed can affect several co-transcriptional processes, such as splicing, $\text{m}^{6}$A RNA methylation, and polyadenylation \citep{munizRNAPolymeraseII2021}. Recently, a study of \citet{debesAgeingassociatedChangesTranscriptional2023} showed that organism aging is associated with an increase in Pol II speed, whereas lifespan-prolonging interventions tend to decrease it.
-			\item The speed of intron splicing (time needed to splice the intron out of the transcript) is another important aspect of RNA metabolism.
+			\item The speed of intron splicing (time needed to splice the intron out of the transcript) is another important aspect of RNA metabolism. The estimates of intron splicing speed varies a lot, ranging from several seconds up to 15 minutes \citep{alpertPerfectTimingSplicing2017, shenasaPremRNASplicingIts2023, sethiSinglemoleculeMultimodalTiming2025}.
+			\item I should also discuss transcription initiation rate, it's the main regulator of transcript abundance.
 		\end{itemize}
-		\item Measuring this rates is challenging, dedicated experiments are needed.
-		\item Cite here \citet{furlanDynamicsTranscriptionalPosttranscriptional2021}, it's a very relevant review.
+		\item Many other kinetic rates are important, e.g \citet{mullerNuclearExportLimiting2024} recently showed that speed of nuclear export is largely variable and influence the mRNA lifetime. Also translation efficency is widely studied \citep{gingoldDeterminantsTranslationEfficiency2011}, as it affect the proteins abundance. However, our work here will focus only on rates of transcription initiation, elongation, splicing and RNA degradation, as these rates affect total RNA-seq data and we will be able to capture them in our model.
+		\item Measuring RNA kinetic rates is challenging, dedicated experiments are needed. Usually, these methods rely on RNA labeling \citep{furlanDynamicsTranscriptionalPosttranscriptional2021}.
+		\begin{itemize}
+			\item Maybe I can elaborate bit more on these method, but only briefly, as they are not the focus of my work.
+		\end{itemize}
+		
 		\item Here, we discuss how total RNA-seq can be used to say something about these rates. Total RNA-seq data are common, easy to produce, and large amount of them is already available. However, due to 'static' nature of total RNA-seq data, our measurements will be bit more limited.
+		\begin{itemize}
+			\item \citet{ameurTotalRNASequencing2011} described the relation between intron coverage and transcription elongation speed in total RNA-seq. This principle was then used in subsequent works which attempted to model transcription elongation speed from total RNA-seq \citep{jonkersGenomewideDynamicsPol2014, kawamuraStatisticalInferenceRate2019, debesAgeingassociatedChangesTranscriptional2023}.
+		\end{itemize}
 		\end{itemize}
 	
 	\section{Model of RNA metabolism}
@@ -108,5 +116,8 @@
 	\newpage
 	\section*{Supplementary Methods}
 	Implementation details, more math details.
+	\begin{itemize}
+		\item Specification of the model as ODE / PDE, solving for steady state (steady state solution shown in the main text).
+	\end{itemize}
 	
 \end{document}
