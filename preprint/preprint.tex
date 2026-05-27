@@ -1,4 +1,3 @@
-
 \documentclass{article}
 \usepackage{graphicx} % Required for inserting images
 \usepackage{amsmath}
@@ -26,98 +25,111 @@
 \date{}
 
 \begin{document}
-	
-	
-	\maketitle
-	
-	\begin{abstract}
-		Description of what I did.
-	\end{abstract}
-	
-	
-	\section{Introduction}
-	\begin{itemize}
-		\item RNA metabolism is dynamic system, speed of reactions = kinetic rates. Kinetic rates are important \citep{furlanDynamicsTranscriptionalPosttranscriptional2021}.
-		\begin{itemize}
-			\item For example, \citet{vockRNADecayCafeUniformlyProcessed2025} recently estimated that variability in RNA degradation rate explains at least 25\% of variability in transcript abundances between different human cell lines. In immune system, control of RNA decay plays an especially important regulatory role \citep{schottNetworksControllingMRNA2010}.
-			\item Transcription elongations speed also plays an important role in RNA metabolism. Changes in Pol II speed can affect several co-transcriptional processes, such as splicing, $\text{m}^{6}$A RNA methylation, and polyadenylation \citep{munizRNAPolymeraseII2021}. Recently, a study of \citet{debesAgeingassociatedChangesTranscriptional2023} showed that organism aging is associated with an increase in Pol II speed, whereas lifespan-prolonging interventions tend to decrease it.
-			\item The speed of intron splicing (time needed to splice the intron out of the transcript) is another important aspect of RNA metabolism. The estimates of intron splicing speed varies a lot, ranging from several seconds up to 15 minutes \citep{alpertPerfectTimingSplicing2017, shenasaPremRNASplicingIts2023, sethiSinglemoleculeMultimodalTiming2025}.
-			\item I should also discuss transcription initiation rate, it's the main regulator of transcript abundance.
-		\end{itemize}
-		\item Many other kinetic rates are important, e.g \citet{mullerNuclearExportLimiting2024} recently showed that speed of nuclear export is largely variable and influence the mRNA lifetime. Also translation efficency is widely studied \citep{gingoldDeterminantsTranslationEfficiency2011}, as it affect the proteins abundance. However, our work here will focus only on rates of transcription initiation, elongation, splicing and RNA degradation, as these rates affect total RNA-seq data and we will be able to capture them in our model.
-		\item Measuring RNA kinetic rates is challenging, dedicated experiments are needed. Usually, these methods rely on RNA labeling \citep{furlanDynamicsTranscriptionalPosttranscriptional2021}.
-		\begin{itemize}
-			\item Maybe I can elaborate bit more on these method, but only briefly, as they are not the focus of my work.
-		\end{itemize}
-		
-		\item Here, we discuss how total RNA-seq can be used to say something about these rates. Total RNA-seq data are common, easy to produce, and large amount of them is already available. However, due to 'static' nature of total RNA-seq data, our measurements will be bit more limited.
-		\begin{itemize}
-			\item \citet{ameurTotalRNASequencing2011} described the relation between intron coverage and transcription elongation speed in total RNA-seq. This principle was then used in subsequent works which attempted to model transcription elongation speed from total RNA-seq \citep{jonkersGenomewideDynamicsPol2014, kawamuraStatisticalInferenceRate2019, debesAgeingassociatedChangesTranscriptional2023}.
-		\end{itemize}
-		\end{itemize}
-	
-	\section{Model of RNA metabolism}
-	
-	Here I will describe the physical model. The ODE or PDE specification will be in Methods section, here I will just show the solution of steady state, and emphasize that measured quantities always depend only on ratios of kinetic rates $\to$ source of non-identifiability. Say that this is a general property of dynamic models:
-	\begin{itemize}
-		\item Consider an autonomous dynamical system with state vector $\boldsymbol{x}$, and with dynamics
-		$$
-		\dot{\boldsymbol{x}} = f(\boldsymbol{x})
-		$$		
-		\item It holds that
-		$$	
-		f(\boldsymbol{x}) = 0 \Leftrightarrow c \cdot f(\boldsymbol{x}) = 0 \quad  \forall c \in \mathbb{R}_+
-		$$
-		
-		\item Therefore, steady-state data cannot distinguish $f(\boldsymbol{x})$ from $c \cdot f(\boldsymbol{x})$.  
-		Consequently, only ratios of rates are identifiable.		
-		\item This type of structural non-identifiability is common in RNA metabolism models.
-	\end{itemize}
-	Then I will say that we can estimate difference of LFCs (e.g. LFC(transcription elongation) - LFC(RNA degradation)), and that I implemented model that does that.
-	
-	I also visualizing the schema of RNA metabolism in figure  \ref{fig:rna_metabolism_schema}.
-	\begin{figure}[htbp]
-		\centering
-		\includegraphics[width=0.9\textwidth]{rna_metabolism.png}
-		\caption{Schema of RNA metabolism.}
-		\label{fig:rna_metabolism_schema}
-	\end{figure}
 
-	Also discuss that RNA-seq data are compositional, which adds another layer of non-identifiability.
 
-	\section{Method}
-	Here will be detailed description of the mathematics behind.
-	\begin{enumerate}
-		\item ODE or PDE model of RNA metabolism
-		\item Statistical model (parametrized by LFCs)
-		
-	\end{enumerate}
-	Implementation notes (e.g. how we compute intron coverage, or that the whole stuff is implemented in PyTorch + Nextflow pipeline around) will be in 'Supplementary Methods'.
-		
-	\section{Results}
-	I will apply the model on some data, e.g. ENCODE datasets of stem cell differentiation, or degron mediated protein KD. Will plot and describe the results here. Should mainly serve for illustration, maybe e.g. mutations known to influence elongation speed (Drosophilla and C. Elegans data, maybe human cell lines if data are available).
-	
-	\section{Discussion}
-	Discuss stuff here.
-	
-	
-	
-	\section*{Code availability}
-	An implementation of our method is available at \url{https://github.com/jkoubele/pol-ii-speed}.
-	
-	\section*{Acknowledgements}
-	This work was funded by the Deutsche Forschungsgemeinschaft (DFG, German Research Foundation) 
-	under Germany's Excellence Strategy – EXC 2030 – 390661388. \\	
-	Illustrations were created with BioRender.com.
-	
-	
-	\bibliography{references}
-	
-	\newpage
-	\section*{Supplementary Methods}
-	Implementation details, more math details.
-	\begin{itemize}
-		\item Specification of the model as ODE / PDE, solving for steady state (steady state solution shown in the main text).
-	\end{itemize}
-	
+    \maketitle
+
+    \begin{abstract}
+        Description of what I did.
+    \end{abstract}
+
+
+    \section{Introduction}
+    \begin{itemize}
+        \item RNA metabolism is dynamic system, speed of reactions = kinetic rates. Kinetic rates are important \citep{furlanDynamicsTranscriptionalPosttranscriptional2021}.
+        \begin{itemize}
+            \item For example, \citet{vockRNADecayCafeUniformlyProcessed2025} recently estimated that variability in RNA degradation rate explains at least 25\% of variability in transcript abundances between different human cell lines. In immune system, control of RNA decay plays an especially important regulatory role \citep{schottNetworksControllingMRNA2010}.
+            \item Transcription elongations speed also plays an important role in RNA metabolism. Changes in Pol II speed can affect several co-transcriptional processes, such as splicing, $\text{m}^{6}$A RNA methylation, and polyadenylation \citep{munizRNAPolymeraseII2021}. Recently, a study of \citet{debesAgeingassociatedChangesTranscriptional2023} showed that organism aging is associated with an increase in Pol II speed, whereas lifespan-prolonging interventions tend to decrease it.
+            \item The speed of intron splicing (time needed to splice the intron out of the transcript) is another important aspect of RNA metabolism. The estimates of intron splicing speed varies a lot, ranging from several seconds up to 15 minutes \citep{alpertPerfectTimingSplicing2017, shenasaPremRNASplicingIts2023, sethiSinglemoleculeMultimodalTiming2025}.
+            \item I should also discuss transcription initiation rate, it's the main regulator of transcript abundance.
+        \end{itemize}
+        \item Many other kinetic rates are important, e.g \citet{mullerNuclearExportLimiting2024} recently showed that speed of nuclear export is largely variable and influence the mRNA lifetime. Also translation efficency is widely studied \citep{gingoldDeterminantsTranslationEfficiency2011}, as it affect the proteins abundance. However, our work here will focus only on rates of transcription initiation, elongation, splicing and RNA degradation, as these rates affect total RNA-seq data and we will be able to capture them in our model.
+        \item Measuring RNA kinetic rates is challenging, dedicated experiments are needed. Usually, these methods rely on RNA labeling \citep{furlanDynamicsTranscriptionalPosttranscriptional2021}.
+        \begin{itemize}
+            \item Maybe I can elaborate bit more on these method, but only briefly, as they are not the focus of my work.
+        \end{itemize}
+
+        \item Here, we discuss how total RNA-seq can be used to say something about these rates. Total RNA-seq data are common, easy to produce, and large amount of them is already available. However, due to 'static' nature of total RNA-seq data, our measurements will be bit more limited.
+
+        \subsection{Related Work}
+        Here we briefly review methods most relevant to our approach; for a more comprehensive overview of computational methods for inferring RNA kinetic rates from sequencing data, we refer the reader to \citet{furlanDynamicsTranscriptionalPosttranscriptional2021}.
+        \begin{itemize}
+            \item \citet{ameurTotalRNASequencing2011} described the relation between intron coverage and transcription elongation speed in total RNA-seq. This principle was then used in subsequent works which attempted to model transcription elongation speed from total RNA-seq \citep{jonkersGenomewideDynamicsPol2014, kawamuraStatisticalInferenceRate2019, debesAgeingassociatedChangesTranscriptional2023}.
+            \item The SnapSHot-Seq method \citep{graySnapShotSeqMethodExtracting2014} also uses shape of intronic coverage, but assumes constant elongation speed, and used the intronic coverage to compute other kinetic rates.
+            \item The INSPEcT- method \citep{furlanGenomewideDynamicsRNA2020} is conceptually bit similar to my work, but focuses on between-gene comparison rather than between-conditions comparison.
+            \item The EISA method \citep{gaidatzisAnalysisIntronicExonic2015} is more similar to my approach, count intron and exons counts per gene and compute LFC of them between conditions.
+            \item The REMBRANDTS method \citep{alkallasInferenceRNADecay2017} builds on EISA, works with assumption that splicing machinery may saturate for highly expressed gene, somehow pools information across genes to remove this bias from EISA-based method.
+        \end{itemize}
+    \end{itemize}
+
+
+    \section{Model of RNA metabolism}
+
+    Here I will describe the physical model. The ODE or PDE specification will be in Methods section, here I will just show the solution of steady state, and emphasize that measured quantities always depend only on ratios of kinetic rates $\to$ source of non-identifiability. Say that this is a general property of dynamic models:
+    \begin{itemize}
+        \item Consider an autonomous dynamical system with state vector $\boldsymbol{x}$, and with dynamics
+        $$
+        \dot{\boldsymbol{x}} = f(\boldsymbol{x})
+        $$
+        \item It holds that
+        $$
+        f(\boldsymbol{x}) = 0 \Leftrightarrow c \cdot f(\boldsymbol{x}) = 0 \quad  \forall c \in \mathbb{R}_+
+        $$
+
+        \item Therefore, steady-state data cannot distinguish $f(\boldsymbol{x})$ from $c \cdot f(\boldsymbol{x})$.
+        Consequently, only ratios of rates are identifiable.
+        \item This type of structural non-identifiability is common in RNA metabolism models \citep{furlanDynamicsTranscriptionalPosttranscriptional2021}.
+    \end{itemize}
+    Then I will say that we can estimate difference of LFCs (e.g. LFC(transcription elongation) - LFC(RNA degradation)), and that I implemented model that does that.
+
+    I also visualizing the schema of RNA metabolism in figure  \ref{fig:rna_metabolism_schema}.
+    \begin{figure}[htbp]
+        \centering
+        \includegraphics[width=0.9\textwidth]{rna_metabolism.png}
+        \caption{Schema of RNA metabolism.}
+        \label{fig:rna_metabolism_schema}
+    \end{figure}
+
+    Also discuss that RNA-seq data are compositional, which adds another layer of non-identifiability.
+
+
+    \section{Method}
+    Here will be detailed description of the mathematics behind.
+    \begin{enumerate}
+        \item ODE or PDE model of RNA metabolism
+        \item Statistical model (parametrized by LFCs)
+
+    \end{enumerate}
+    Implementation notes (e.g. how we compute intron coverage, or that the whole stuff is implemented in PyTorch + Nextflow pipeline around) will be in 'Supplementary Methods'.
+
+
+    \section{Results}
+    I will apply the model on some data, e.g. ENCODE datasets of stem cell differentiation, or degron mediated protein KD. Will plot and describe the results here. Should mainly serve for illustration, maybe e.g. mutations known to influence elongation speed (Drosophilla and C. Elegans data, maybe human cell lines if data are available).
+
+
+    \section{Discussion}
+    Discuss stuff here.
+
+
+    \section*{Code availability}
+    An implementation of our method is available at \url{https://github.com/jkoubele/pol-ii-speed}.
+
+
+    \section*{Acknowledgements}
+    This work was funded by the Deutsche Forschungsgemeinschaft (DFG, German Research Foundation)
+    under Germany's Excellence Strategy – EXC 2030 – 390661388. \\
+    Illustrations were created with BioRender.com.
+
+
+    \bibliography{references}
+
+    \newpage
+
+
+    \section*{Supplementary Methods}
+    Implementation details, more math details.
+    \begin{itemize}
+        \item Specification of the model as ODE / PDE, solving for steady state (steady state solution shown in the main text).
+    \end{itemize}
+
 \end{document}
