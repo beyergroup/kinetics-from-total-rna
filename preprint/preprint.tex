@@ -10,6 +10,8 @@
 \usepackage{authblk}
 \usepackage[hidelinks]{hyperref}
 \usepackage{nameref}
+\usepackage[most]{tcolorbox}
+
 
 \graphicspath{{./figures/}}
 
@@ -67,7 +69,11 @@
 
     \section{Dynamical Model of RNA Metabolism}
 
-    We will now describe a simple dynamical model of RNA metabolism. For a more thorough description of the model and its assumptions, please see the section \nameref{supplementary_methods}.
+    We will now describe a simple dynamical model of RNA metabolism. For a more thorough description of the model and its assumptions, please see the section \nameref{supplementary_methods}. 
+    
+    Mathematically, the model couples a partial differential equation (PDE) for the spatial density of elongating polymerases along the gene with a small set of ordinary differential equations (ODEs) 
+    for the abundances of completed (mature) transcripts and unspliced introns.
+    
 
     \subsection{Model Schema and Kinetic Rates}
 
@@ -101,7 +107,7 @@
     \subsection{State Variables}
     We will describe the model state by the following variables: density of the polymerases transcribing the gene $\rho(x)$, number of mature transcripts $T_{\mathrm{mature}}$, and, for each intron in the gene, the number of fully transcribed but unspliced introns $I_{\mathrm{unspliced}}$. Furthermore, the polymerase density $\rho(x)$ can be used to derive the number of nascent transcripts $T_{\mathrm{nascent}}$ and the number of introns currently being transcribed $I_{\mathrm{nascent}}$. These variables are described in more detail below.
 
-    Each of these variables is a function of time; we omit the explicit time argument in this section for the sake of brevity.
+    Each of these variables is a function of time; we omit writing the explicit time argument in this section for the sake of brevity.
 
     We assume a given gene (in a given biological sample) of a length $L_{\mathrm{gene}}$. The gene length is measured in base-pairs, $\left[ L_{\mathrm{gene}} \right]= \mathrm{bp}$. We consider the gene to be a continuous interval $\left[0, L_{\mathrm{gene}} \right]$.
 
@@ -122,7 +128,39 @@
     Similarly, for given intron, we denote the amount of finished, but yet unspliced introns as $I_{\mathrm{unspliced}}$. We don't do any assumptions about the transcript in which such unspliced intron is located: the transcript may be nascent, transcribed but not processed yet, or the unspliced intron may be retained in otherwise mature transcript.
 
     \subsection{Model Dynamics}
-    PDE goes here.
+    We will now describe the dynamics of our model. For the sake of brevity, we will write the explicit time argument only for the variables that depend also on the location $x$.
+    
+    To begin with, we define the polymerase flux as 
+    $$
+    J(x,t) = k_{\mathrm{elong}} \cdot \rho(x,t)
+    $$
+    The flux represents the rate at which polymerases pass the location $x$, and is measured in polymerases per second: $\left[ J \right] = \mathrm{polymerases}\ \cdot \mathrm{s}^{-1}$.
+    
+    We can now write the dynamics of our model:
+    
+    \begin{tcolorbox}[
+    	colback=white, colframe=black, boxrule=0.4pt, arc=1pt,
+    	title=Model dynamics, fonttitle=\bfseries\small,
+    	coltitle=black, colbacktitle=white, % subtle: no colored title bar
+    	left=6pt, right=6pt, top=4pt, bottom=4pt,
+    	]
+    	\setlength{\jot}{10pt}
+    	\begin{align}
+    		J(0,t) &= k_{\mathrm{init}} \label{eq:initiation}\\
+    		\frac{\partial \rho(x,t)}{\partial t} &= -\frac{\partial J(x,t)}{\partial x} \label{eq:elongation}\\
+    		\frac{d T_{\mathrm{mature}}}{dt} &= J(L_{\mathrm{gene}},t) - k_{\mathrm{deg}} \cdot T_{\mathrm{mature}} \label{eq:mature}\\
+    		\frac{d I_{\mathrm{unspliced}}}{dt} &= J(s+L_{\mathrm{intron}},t) - k_{\mathrm{splice}} \cdot I_{\mathrm{unspliced}} \label{eq:splice}
+    	\end{align}
+    	
+    \end{tcolorbox}
+    
+    
+    We will now discuss the model dynamics in more detail.
+   \begin{itemize}
+	   \item Equation~\eqref{eq:initiation} describes the \textbf{transcription initiation}. It is a boundary condition for the elongation dynamics~\eqref{eq:elongation} at the start of the gene ($x=0$). It states that polymerases enter the gene at $x=0$ with rate $k_{\mathrm{init}}$.
+	   
+	   \item Equation~\eqref{eq:elongation} describes the \textbf{transcription elongation}. Polymerases move along the gene at speed $k_{\mathrm{elong}}$, giving rise to the flux $J(x,t)$. Because polymerases are neither created nor destroyed within the gene body, the density at a given location changes only through the imbalance between the flux entering and leaving it — that is, the negative spatial gradient of the flux.
+   \end{itemize}
 
     \subsection{Steady State Solution}
     Here I will describe the model solution.
@@ -145,6 +183,8 @@
         Consequently, only ratios of rates are identifiable.
         \item This type of structural non-identifiability is common in RNA metabolism models \citep{furlanDynamicsTranscriptionalPosttranscriptional2021}.
     \end{itemize}
+    The same conclusion holds for the spatially-resolved (PDE) formulation of the model, where the state is the polymerase density $\rho(x,t)$ rather than a finite state vector; we formalize this generalization in the section \nameref{supplementary_methods}.
+
     Then I will say that we can estimate difference of LFCs (e.g. LFC(transcription elongation) - LFC(RNA degradation)), and that I implemented model that does that.
 
 
@@ -190,5 +230,50 @@
     \begin{itemize}
         \item Specification of the model as ODE / PDE, solving for steady state (steady state solution shown in the main text).
     \end{itemize}
+
+    \subsection*{Structural non-identifiability: unified ODE/PDE statement}
+    In the main text we stated the structural non-identifiability for an autonomous
+    system described by $\dot{\boldsymbol{x}} = f(\boldsymbol{x})$ with finite state
+    vector $\boldsymbol{x}$. The argument never used the finite-dimensionality of the
+    state; it used only that the dynamics scale linearly with the kinetic rates. We
+    record here the general statement, which covers both the finite-dimensional (ODE)
+    and the spatially-resolved (PDE) formulation.
+
+    Consider any autonomous system whose state $u$ evolves under a generator
+    $\mathcal{F}$ parametrized by a vector of kinetic rates $\boldsymbol{\theta}$,
+    $$
+    \partial_t u = \mathcal{F}_{\boldsymbol{\theta}}(u).
+    $$
+    The state $u$ may be a vector in $\mathbb{R}^n$ (an ODE, $\mathcal{F}_{\boldsymbol{\theta}} = f$
+    a vector field) or an element of a function space (a PDE, $\mathcal{F}_{\boldsymbol{\theta}}$
+    a differential operator); the statement below is indifferent to which.
+
+    Assume only that the generator is positively homogeneous of degree one in the
+    rates,
+    $$
+    \mathcal{F}_{c\boldsymbol{\theta}}(u) = c\,\mathcal{F}_{\boldsymbol{\theta}}(u)
+    \qquad \forall c \in \mathbb{R}_+ ,
+    $$
+    i.e. multiplying every rate by $c$ multiplies the whole generator by $c$ --- the
+    same biological meaning that $c \cdot f(\boldsymbol{x})$ carries in the main text.
+    The steady-state condition is then scale-invariant in the rates,
+    $$
+    \mathcal{F}_{\boldsymbol{\theta}}(u) = 0
+    \;\Longleftrightarrow\;
+    \mathcal{F}_{c\boldsymbol{\theta}}(u) = 0
+    \qquad \forall c \in \mathbb{R}_+ ,
+    $$
+    so steady-state data cannot distinguish $\boldsymbol{\theta}$ from $c\,\boldsymbol{\theta}$,
+    and only ratios of rates are identifiable --- exactly as in the finite-dimensional
+    case.
+
+    The degree-one homogeneity is the natural condition for kinetic models: any
+    generator built from terms that are each a single rate times a function of the
+    state (e.g. mass-action or (pseudo-)first-order kinetics, and linear transport)
+    satisfies it. As a concrete spatial instance, the polymerase transport operator
+    $\mathcal{F}(\rho) = -\partial_x(v\rho)$ with boundary flux $J(0)=\eta$ is linear
+    in the rates $(v,\eta)$; under $\boldsymbol{\theta}\to c\boldsymbol{\theta}$ the
+    steady-state density $\rho = \eta/v$ and the downstream pools are unchanged,
+    recovering the same non-identifiability in the spatial model.
 
 \end{document}
