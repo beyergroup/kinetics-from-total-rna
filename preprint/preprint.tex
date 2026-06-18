@@ -159,7 +159,13 @@
    \begin{itemize}
 	   \item Equation~\eqref{eq:initiation} describes the \textbf{transcription initiation}. It is a boundary condition for the elongation dynamics~\eqref{eq:elongation} at the start of the gene ($x=0$). It states that polymerases enter the gene at $x=0$ with rate $k_{\mathrm{init}}$.
 	   
-	   \item Equation~\eqref{eq:elongation} describes the \textbf{transcription elongation}. Polymerases move along the gene at speed $k_{\mathrm{elong}}$, giving rise to the flux $J(x,t)$. Because polymerases are neither created nor destroyed within the gene body, the density at a given location changes only through the imbalance between the flux entering and leaving it — that is, the negative spatial gradient of the flux.
+	   \item Equation~\eqref{eq:elongation} describes the \textbf{transcription elongation}. Polymerases move along the gene at speed $k_{\mathrm{elong}}$, giving rise to the flux $J(x,t)$. Because polymerases are neither created nor destroyed within the gene body, the density at a given location changes only through the imbalance between the flux entering and leaving it — that is, the negative spatial gradient of the flux.	   
+	   
+	   \item Equation~\eqref{eq:mature} describes \textbf{transcript maturation} and \textbf{degradation}. The production term $J(L_{\mathrm{gene}},t)$ is the flux of polymerases at the gene end, producing newly matured transcripts. The decay term $-k_{\mathrm{deg}} \cdot T_{\mathrm{mature}}$ models
+	   their degradation, treating $T_{\mathrm{mature}}$ as a well-mixed pool that decays exponentially.	   
+	       
+	  \item Equation~\eqref{eq:splice} describes \textbf{intron completion} and \textbf{splicing}. The production term $J(s+L_{\mathrm{intron}},t)$ is the flux of polymerases at the intron end, producing newly completed introns. The decay term $-k_{\mathrm{splice}} \cdot I_{\mathrm{unspliced}}$ models intron splicing and degradation, again as exponential decay.
+	    
    \end{itemize}
 
     \subsection{Steady State Solution}
