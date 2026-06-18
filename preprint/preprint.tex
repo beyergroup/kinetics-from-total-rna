@@ -233,53 +233,5 @@
 
     \section*{Supplementary Methods} \label{supplementary_methods}
     Implementation details, more math details.
-    \begin{itemize}
-        \item Specification of the model as ODE / PDE, solving for steady state (steady state solution shown in the main text).
-    \end{itemize}
-
-    \subsection*{Structural non-identifiability: unified ODE/PDE statement}
-    In the main text we stated the structural non-identifiability for an autonomous
-    system described by $\dot{\boldsymbol{x}} = f(\boldsymbol{x})$ with finite state
-    vector $\boldsymbol{x}$. The argument never used the finite-dimensionality of the
-    state; it used only that the dynamics scale linearly with the kinetic rates. We
-    record here the general statement, which covers both the finite-dimensional (ODE)
-    and the spatially-resolved (PDE) formulation.
-
-    Consider any autonomous system whose state $u$ evolves under a generator
-    $\mathcal{F}$ parametrized by a vector of kinetic rates $\boldsymbol{\theta}$,
-    $$
-    \partial_t u = \mathcal{F}_{\boldsymbol{\theta}}(u).
-    $$
-    The state $u$ may be a vector in $\mathbb{R}^n$ (an ODE, $\mathcal{F}_{\boldsymbol{\theta}} = f$
-    a vector field) or an element of a function space (a PDE, $\mathcal{F}_{\boldsymbol{\theta}}$
-    a differential operator); the statement below is indifferent to which.
-
-    Assume only that the generator is positively homogeneous of degree one in the
-    rates,
-    $$
-    \mathcal{F}_{c\boldsymbol{\theta}}(u) = c\,\mathcal{F}_{\boldsymbol{\theta}}(u)
-    \qquad \forall c \in \mathbb{R}_+ ,
-    $$
-    i.e. multiplying every rate by $c$ multiplies the whole generator by $c$ --- the
-    same biological meaning that $c \cdot f(\boldsymbol{x})$ carries in the main text.
-    The steady-state condition is then scale-invariant in the rates,
-    $$
-    \mathcal{F}_{\boldsymbol{\theta}}(u) = 0
-    \;\Longleftrightarrow\;
-    \mathcal{F}_{c\boldsymbol{\theta}}(u) = 0
-    \qquad \forall c \in \mathbb{R}_+ ,
-    $$
-    so steady-state data cannot distinguish $\boldsymbol{\theta}$ from $c\,\boldsymbol{\theta}$,
-    and only ratios of rates are identifiable --- exactly as in the finite-dimensional
-    case.
-
-    The degree-one homogeneity is the natural condition for kinetic models: any
-    generator built from terms that are each a single rate times a function of the
-    state (e.g. mass-action or (pseudo-)first-order kinetics, and linear transport)
-    satisfies it. As a concrete spatial instance, the polymerase transport operator
-    $\mathcal{F}(\rho) = -\partial_x(v\rho)$ with boundary flux $J(0)=\eta$ is linear
-    in the rates $(v,\eta)$; under $\boldsymbol{\theta}\to c\boldsymbol{\theta}$ the
-    steady-state density $\rho = \eta/v$ and the downstream pools are unchanged,
-    recovering the same non-identifiability in the spatial model.
 
 \end{document}
