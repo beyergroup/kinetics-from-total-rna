@@ -145,12 +145,14 @@
     	left=6pt, right=6pt, top=4pt, bottom=4pt,
     	]
     	\setlength{\jot}{10pt}
+    	\begin{subequations}
     	\begin{align}
     		J(0,t) &= k_{\mathrm{init}} \label{eq:initiation}\\
     		\frac{\partial \rho(x,t)}{\partial t} &= -\frac{\partial J(x,t)}{\partial x} \label{eq:elongation}\\
     		\frac{d T_{\mathrm{mature}}}{dt} &= J(L_{\mathrm{gene}},t) - k_{\mathrm{deg}} \cdot T_{\mathrm{mature}} \label{eq:mature}\\
     		\frac{d I_{\mathrm{unspliced}}}{dt} &= J(s+L_{\mathrm{intron}},t) - k_{\mathrm{splice}} \cdot I_{\mathrm{unspliced}} \label{eq:splice}
     	\end{align}
+    	\end{subequations}
     	
     \end{tcolorbox}
     
@@ -169,7 +171,32 @@
    \end{itemize}
 
     \subsection{Steady State Solution}
-    Here I will describe the model solution.
+    To obtain the steady state solution, we set time derivatives of all variables to zero. The full derivation is provided in the \nameref{supplementary_methods}. We obtain the following solution:
+    \begin{tcolorbox}[
+    	colback=white, colframe=black, boxrule=0.4pt, arc=1pt,
+    	title=Steady state solution, fonttitle=\bfseries\small,
+    	coltitle=black, colbacktitle=white, % subtle: no colored title bar
+    	left=6pt, right=6pt, top=4pt, bottom=4pt,
+    	]
+    	\setlength{\jot}{10pt}
+    	\begin{subequations}
+    	\begin{align}
+    		\rho(x) &= \frac{k_{\mathrm{init}}}{k_{\mathrm{elong}}} \label{eq:rho_ss}\\
+    		T_{\mathrm{nascent}} &= \frac{L_{\mathrm{gene}} \cdot k_\mathrm{init}}{k_\mathrm{elong}}  \label{eq:t_nas_ss}  \\
+    		I_{\mathrm{nascent}} &= \frac{L_{\mathrm{intron}} \cdot  k_\mathrm{init}}{k_\mathrm{elong}}  \label{eq:i_nas_ss}  \\
+    		T_{\mathrm{mature}} &= \frac{k_\mathrm{init} }{k_\mathrm{deg}}  \label{eq:t_mat_ss}  \\
+    		I_{\mathrm{unspliced}} &= \frac{k_\mathrm{init} }{k_\mathrm{splice}}  \label{eq:i_unspliced_ss}
+    	\end{align}
+    	\end{subequations}    	
+    \end{tcolorbox}
+	We will now comment on the steady state solution described above.
+	\begin{itemize}
+		\item The density $\rho(x)$ is uniform over the whole gene body. Its value scales proportionately with $k_{\mathrm{init}}$ and inversely proportionally with $k_{\mathrm{elong}}$.
+		\item The values of $T_{\mathrm{nascent}}$ and $I_{\mathrm{nascent}}$ are obtained by integrating the density $\rho(x)$ over the gene and intron body, respectively. For this reason, they scale proportionally with $L_{\mathrm{gene}}$ and $L_{\mathrm{intron}}$, respectively.
+		\item In contrast, $T_{\mathrm{mature}}$ and $I_{\mathrm{unspliced}}$ are pools of fully transcribed molecules, therefore they have no dependence on the gene or intron length. Each of them scales proportionally with the common production rate $k_{\mathrm{init}}$, and inversely proportionately with their corresponding removal rate. The removal rate of mature transcripts is the degradation rate $k_{\mathrm{deg}}$, while the removal rate of unspliced introns is $k_{\mathrm{splice}}$, representing the speed of intron splicing and degradation.
+	\end{itemize}
+	
+    
 
     \subsection{Structural Non-identifiability}
 
