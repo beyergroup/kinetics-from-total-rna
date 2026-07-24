@@ -71,13 +71,13 @@
 
     We will now describe a simple dynamical model of RNA metabolism. For a more thorough description of the model and its assumptions, please see the section \nameref{supplementary_methods}. 
     
-    Mathematically, the model couples a partial differential equation (PDE) for the spatial density of elongating polymerases along the gene with a small set of ordinary differential equations (ODEs) 
+    Mathematically, the model couples a transport partial differential equation (PDE) for the spatial density of elongating polymerases along the gene with a small set of ordinary differential equations (ODEs) 
     for the abundances of completed (mature) transcripts and unspliced introns.
     
 
     \subsection{Model Schema and Kinetic Rates}
 
-    The transcription is started by the RNA polymerase binding to the transcription start site (TSS) on DNA. Then, the RNA polymerase transcribe DNA by moving on it, elongating the nascent transcript. Once an intron is fully transcribed, the splicing machinery removes the intron from the transcript and degrade it. Finally, mature transcripts live in the cell, until the are eventually degraded. The schema of this model is visualized in figure \ref{fig:rna_metabolism_schema}.
+    The transcription is started by the RNA polymerase binding to the transcription start site (TSS) on DNA. Then, the RNA polymerase transcribes DNA by moving on it, elongating the nascent transcript. Once an intron is fully transcribed, the splicing machinery removes the intron from the transcript and degrades it. Finally, mature transcripts live in the cell, until they are eventually degraded. The schema of this model is visualized in figure \ref{fig:rna_metabolism_schema}.
 
 
     \begin{figure}[htbp]
@@ -90,7 +90,7 @@
     Our description focuses only on the processes in the RNA metabolism that can be captured by total RNA-seq data. Other processes, such as nuclear export or translation, are not reflected in total RNA-seq, and we therefore omit them in our model.
 
 
-    The four processes described in our model - transcription initiation, transcription elongation, intron splicing and RNA degradation - are chemical reactions, and their speeds can be described by the following kinetic rates:
+    The four processes described in our model - transcription initiation, transcription elongation, intron splicing and RNA degradation - are chemical reactions, and their speeds can be described by the following kinetic parameters:
     \begin{itemize}
         \item The transcription \textbf{initiation rate} $k_{\mathrm{init}}$, measured by the number of polymerases that initiate transcription per second: $\left[ k_{\mathrm{init}} \right]= \mathrm{polymerases}\ \cdot \mathrm{s}^{-1}$.
         \item The transcription \textbf{elongation speed} $k_{\mathrm{elong}}$, measured by the number of base-pairs transcribed per second: $\left[ k_{\mathrm{elong}} \right]= \mathrm{bp}\ \cdot \mathrm{s}^{-1}$.
@@ -100,7 +100,7 @@
     \end{itemize}
     We assume that the kinetic rates may be different for different genes, and that the splicing speed may also vary for different introns in a given gene. Moreover, we assume that the kinetic rates may vary between conditions of the sample (e.g. comparing treated versus control samples), and this variation is what our statistical model (described in the section \nameref{inference_model}) aims to estimate.
 
-    Besides these variations, we assume the kinetic rates to be constant. That is, while our model will describe how abundances of different RNA molecules change in time, the kinetic rates themselves are assumed to stay unchanged. Moreover, we assume that the elongation speed $k_{\mathrm{elong}}$ is constant across the whole gene. This is somewhat simplifying assumption, as the elongation speed was reported to vary inside a gene body as well, specifically being slower for the first 10-15 kb and then accelerating downstream \citep{munizRNAPolymeraseII2021}. (move this note to supplementary).
+    Besides these variations, we assume the kinetic rates to be constant. That is, while our model will describe how abundances of different RNA molecules change in time, the kinetic rates themselves are assumed to stay unchanged. Moreover, we assume that the elongation speed $k_{\mathrm{elong}}$ is constant across the whole gene.
 
     We also assume the transcription to start only at TSS, and terminate at transcription end site (TES). That is, we assume no cryptic initiation within the gene body, and also no premature termination of the transcription.
 
@@ -118,14 +118,14 @@
     T_{\mathrm{nascent}} = \int_{0}^{L_{\mathrm{gene}}} \rho(x) dx
     $$
 
-    Besides the number of nascent transcript, we will be also interested in the number of polymerases that currently transcribe given intron. We will consider an intron of length $L_{\mathrm{intron}}$, starting at a location $s$. We denote the amount of nascent introns (i.e., the number of polymerases transcribing the intron) as
+    Besides the number of nascent transcripts, we will be also interested in the number of polymerases that currently transcribe given intron. We will consider an intron of length $L_{\mathrm{intron}}$, starting at a location $s$. We denote the amount of nascent introns (i.e., the number of polymerases transcribing the intron) as
     $$
     I_{\mathrm{nascent}} = \int_{s}^{s+L_{\mathrm{intron}}} \rho(x) dx
     $$
 
     We denote the scalar amount of finished transcripts present in the sample as  $T_{\mathrm{mature}}$. We use the term \textit{mature} loosely to mean a transcript whose transcription has finished; while most such transcripts are also fully processed, a fraction may still be undergoing processing (e.g.\ polyadenylation or splicing). We do not model these processing steps explicitly and treat all finished transcripts as a single pool $T_{\mathrm{mature}}$.
 
-    Similarly, for given intron, we denote the amount of finished, but yet unspliced introns as $I_{\mathrm{unspliced}}$. We don't do any assumptions about the transcript in which such unspliced intron is located: the transcript may be nascent, transcribed but not processed yet, or the unspliced intron may be retained in otherwise mature transcript.
+    Similarly, for given intron, we denote the amount of finished, but yet unspliced introns as $I_{\mathrm{unspliced}}$. We don't make any assumptions about the transcript in which such unspliced intron is located: the transcript may be nascent, transcribed but not processed yet, or the unspliced intron may be retained in otherwise mature transcript.
 
     \subsection{Model Dynamics}
     We will now describe the dynamics of our model. For the sake of brevity, we will write the explicit time argument only for the variables that depend also on the location $x$.
@@ -170,7 +170,9 @@
 	    
    \end{itemize}
 
-    \subsection{Steady State Solution}
+    \subsection{Steady State Solution} \label{subsec:steady_state}
+    We will now derive the steady state solution of our model. Since total RNA-seq provides only a single snapshot in time, our inference model (described in the section \nameref{inference_model}) assumes that the system is at steady state, i.e. the cells are in homeostasis.
+    
     To obtain the steady state solution, we set time derivatives of all variables to zero. The full derivation is provided in the \nameref{supplementary_methods}. We obtain the following solution:
     \begin{tcolorbox}[
     	colback=white, colframe=black, boxrule=0.4pt, arc=1pt,
@@ -199,29 +201,22 @@
     
 
     \subsection{Structural Non-identifiability}
+    
+    All steady-state quantities derived above depend on ratios of the kinetic rates, rather than on the individual rates directly. Consequently, observing these steady-state quantities is informative about ratios of the kinetic rates, while the individual rates remain non-identifiable.
 
+    This type of non-identifiability is common in dynamical models of RNA metabolism \citep{furlanDynamicsTranscriptionalPosttranscriptional2021}, rather than being a special property of our model. We illustrate it here using a general ODE system; a more general treatment, which also covers the PDE formulation, is provided in the section \nameref{supplementary_methods}. Consider an autonomous dynamical system with state vector $\boldsymbol{x}$ and dynamics
+    $$
+    \frac{d\boldsymbol{x}}{dt} = f(\boldsymbol{x}).
+    $$
+    For any $c \in \mathbb{R}_+$, it holds that
+    $$
+    f(\boldsymbol{x}) = 0 \Leftrightarrow c \cdot f(\boldsymbol{x}) = 0.
+    $$
+    The steady states of the system are defined as the points where $f(\boldsymbol{x}) = 0$; therefore, steady-state observations cannot distinguish the dynamics $f(\boldsymbol{x})$ from $c \cdot f(\boldsymbol{x})$. In a model of metabolism, $c \cdot f(\boldsymbol{x})$ describes a system in which all reactions proceed $c$ times faster than in the system with dynamics $f(\boldsymbol{x})$; both systems share the same steady states, and thus cannot be told apart from steady-state data alone. Because scaling all rates by a common factor leaves the observations unchanged, any identifiable quantity must be unchanged by such scaling, which is exactly the case for ratios of rates.
 
-    Here I will just show the solution of steady state, and emphasize that measured quantities always depend only on ratios of kinetic rates $\to$ source of non-identifiability. Say that this is a general property of dynamic models:
-    \begin{itemize}
-        \item Consider an autonomous dynamical system with state vector $\boldsymbol{x}$, and with dynamics
-        $$
-        \dot{\boldsymbol{x}} = f(\boldsymbol{x})
-        $$
-        \item It holds that
-        $$
-        f(\boldsymbol{x}) = 0 \Leftrightarrow c \cdot f(\boldsymbol{x}) = 0 \quad  \forall c \in \mathbb{R}_+
-        $$
+    Because only ratios of rates are identifiable, comparing biological conditions can reveal changes only in these ratios. As the logarithm of a ratio is a difference of logarithms, the log-fold-change (LFC) of a rate ratio equals the difference of the individual rate LFCs, for example $\mathrm{LFC}(k_{\mathrm{elong}} / k_{\mathrm{deg}}) = \mathrm{LFC}(k_{\mathrm{elong}}) - \mathrm{LFC}(k_{\mathrm{deg}})$. Such differences of LFCs are therefore the quantities that our inference model estimates.
 
-        \item Therefore, steady-state data cannot distinguish $f(\boldsymbol{x})$ from $c \cdot f(\boldsymbol{x})$.
-        Consequently, only ratios of rates are identifiable.
-        \item This type of structural non-identifiability is common in RNA metabolism models \citep{furlanDynamicsTranscriptionalPosttranscriptional2021}.
-    \end{itemize}
-    The same conclusion holds for the spatially-resolved (PDE) formulation of the model, where the state is the polymerase density $\rho(x,t)$ rather than a finite state vector; we formalize this generalization in the section \nameref{supplementary_methods}.
-
-    Then I will say that we can estimate difference of LFCs (e.g. LFC(transcription elongation) - LFC(RNA degradation)), and that I implemented model that does that.
-
-
-    Also discuss that RNA-seq data are compositional, which adds another layer of non-identifiability.
+    Finally, we note that the compositional nature of RNA-seq data introduces a second, independent source of non-identifiability. We address it, and describe the resulting estimable quantities in full, in the section \nameref{inference_model}.
 
 
     \section{Inference Model} \label{inference_model}
@@ -244,10 +239,10 @@
 
 
     \section*{Code availability}
-    An implementation of our method is available at \url{https://github.com/jkoubele/pol-ii-speed}.
+    An implementation of our method is available at \url{https://github.com/jkoubele/kinetics-from-total-rna}.
 
 
-    \section*{Acknowledgements}
+    \section*{Acknowledgments}
     This work was funded by the Deutsche Forschungsgemeinschaft (DFG, German Research Foundation)
     under Germany's Excellence Strategy – EXC 2030 – 390661388. \\
     Illustrations were created with BioRender.com.
@@ -259,6 +254,22 @@
 
 
     \section*{Supplementary Methods} \label{supplementary_methods}
-    Implementation details, more math details.
+    Implementation details, more math details, etc.
+    
+    \subsection*{Dynamic Model}
+    
+    \begin{itemize}
+    	
+    	\item Note about constant $k_{elong}$ acroos the gene body:  This is somewhat simplifying assumption, as the elongation speed was reported to vary inside a gene body as well, specifically being slower for the first 10-15 kb and then accelerating downstream \citep{munizRNAPolymeraseII2021}. 
+    	
+    	\item Note about transcript heterogeneity: ODE (exponential decay term) assumes well-mixed pool of mature transcripts. In some experimental setting, the pool of measured transcripts is not well-mixed: for example, with nascent sequencing via EU-seq, only transcript finished recently are captured. The mature transcripts is such pool may not be degraded exponentially. A model that capture the transcript heterogeneity, e.g. with length of polyA tail serving as transcript 'health-bar', may be more appropriate.
+    	
+    	\item TODO: Add computation of the steady-state solution
+    	
+    	\item TODO: non-identifiability statement for PDE (to cover the case of our coupled PDE-ODE model).
+    	
+    \end{itemize}
+    
+    
 
 \end{document}
