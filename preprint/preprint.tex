@@ -248,7 +248,25 @@
     \begin{equation} \label{eq:pi_times}
     \pi = \frac{\text{transcription time}}{\text{transcription time} + 2 \cdot \text{splicing time}}
     \end{equation}
-    
+
+	We will now describe the mixture components $p_{\mathrm{nascent}}(x)$ and $p_{\mathrm{unspliced}}(x)$. We begin with $p_{\mathrm{unspliced}}(x)$: these reads come from fully transcribed introns, and we simply model their location by a uniform distribution
+	
+	\begin{equation}
+	p_{\mathrm{unspliced}}(x) = \frac{1}{L_{\mathrm{intron}}} 		
+	\end{equation}
+	On the other hand, $p_{\mathrm{nascent}}(x)$ is produced by nascent introns, which have not finished transcribing the intron interval yet. Due to this, reads at location $x$ can be produced only from nascent introns that are already elongated past $x$. This gives us:
+	\begin{equation} \label{eq:nascent_density_propto}
+	p_{\mathrm{nascent}}(x)  \propto \int_{x}^{L_{\mathrm{intron}}} \rho (z) dz
+	\end{equation}
+	The steady state solution \eqref{eq:rho_ss} gives a polymerase density $\rho(x)$ that is constant over the gene body. Carrying out the integral in \eqref{eq:nascent_density_propto} and normalizing to a probability density gives us:
+	\begin{equation}
+	p_{\mathrm{nascent}}(x) = \frac{2 L_{\mathrm{intron}} -2x}{L_{\mathrm{intron}}^2}
+	\end{equation}
+	
+	
+	
+	
+	
 
     \section{Results}
     I will apply the model on some data, e.g. ENCODE datasets of stem cell differentiation, or degron mediated protein KD. Will plot and describe the results here. Should mainly serve for illustration, maybe e.g. mutations known to influence elongation speed (Drosophilla and C. Elegans data, maybe human cell lines if data are available).
