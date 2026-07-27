@@ -50,6 +50,10 @@ process ExtractGenomicFeatures {
         path('constitutive_exons.bed'), emit: constitutive_exons_bed_file
         path('introns.gtf'), emit: introns_gtf_file
         path('constitutive_exons.gtf'), emit: constitutive_exons_gtf_file
+        // Published for inspection only (not used downstream); optional so the
+        // precomputed-features branch, which doesn't produce them, doesn't fail.
+        path('blacklisted_introns.bed'), optional: true
+        path('blacklisted_introns.gtf'), optional: true
         path("protein_coding_genes.csv"), emit: protein_coding_gene_names
         path("all_genes.csv"), emit: all_genes
 
