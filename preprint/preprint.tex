@@ -114,14 +114,14 @@
     The polymerases transcribing the gene are modeled by a continuous density function $\rho(x), x \in \left[0, L_{\mathrm{gene}} \right]$. The density is measured in the number of polymerases per base-pair, $[\rho] = \mathrm{polymerases}\cdot\mathrm{bp}^{-1}$. The density $\rho(x)$ is non-negative, and can be used to obtain the amount of polymerases located in any interval $(a,b)$ as $\int_{a}^{b} \rho(x) dx$.
 
     Specifically, we will denote the number of nascent transcripts (which is equal to the number of transcribing polymerases) as
-    $$
+    \begin{equation} \label{eq:t_nascent_def}
     T_{\mathrm{nascent}} = \int_{0}^{L_{\mathrm{gene}}} \rho(x) dx
-    $$
+    \end{equation}
 
     Besides the number of nascent transcripts, we will be also interested in the number of polymerases that currently transcribe given intron. We will consider an intron of length $L_{\mathrm{intron}}$, starting at a location $s$. We denote the amount of nascent introns (i.e., the number of polymerases transcribing the intron) as
-    $$
+    \begin{equation} \label{eq:i_nascent_def}
     I_{\mathrm{nascent}} = \int_{s}^{s+L_{\mathrm{intron}}} \rho(x) dx
-    $$
+    \end{equation}
 
     We denote the scalar amount of finished transcripts present in the sample as  $T_{\mathrm{mature}}$. We use the term \textit{mature} loosely to mean a transcript whose transcription has finished; while most such transcripts are also fully processed, a fraction may still be undergoing processing (e.g.\ polyadenylation or splicing). We do not model these processing steps explicitly and treat all finished transcripts as a single pool $T_{\mathrm{mature}}$.
 
@@ -131,9 +131,9 @@
     We will now describe the dynamics of our model. For the sake of brevity, we will write the explicit time argument only for the variables that depend also on the location $x$.
     
     To begin with, we define the polymerase flux as 
-    $$
+    \begin{equation} \label{eq:flux_def}
     J(x,t) = k_{\mathrm{elong}} \cdot \rho(x,t)
-    $$
+    \end{equation}
     The flux represents the rate at which polymerases pass the location $x$, and is measured in polymerases per second: $\left[ J \right] = \mathrm{polymerases}\ \cdot \mathrm{s}^{-1}$.
     
     We can now write the dynamics of our model:
@@ -205,13 +205,13 @@
     All steady-state quantities derived above depend on ratios of the kinetic rates, rather than on the individual rates directly. Consequently, observing these steady-state quantities is informative about ratios of the kinetic rates, while the individual rates remain non-identifiable.
 
     This type of non-identifiability is common in dynamical models of RNA metabolism \citep{furlanDynamicsTranscriptionalPosttranscriptional2021}, rather than being a special property of our model. We illustrate it here using a general ODE system; a more general treatment, which also covers the PDE formulation, is provided in the section \nameref{supplementary_methods}. Consider an autonomous dynamical system with state vector $\boldsymbol{x}$ and dynamics
-    $$
+    \begin{equation} \label{eq:autonomous_ode}
     \frac{d\boldsymbol{x}}{dt} = f(\boldsymbol{x}).
-    $$
+    \end{equation}
     For any $c \in \mathbb{R}_+$, it holds that
-    $$
+    \begin{equation} \label{eq:scaling_invariance}
     f(\boldsymbol{x}) = 0 \Leftrightarrow c \cdot f(\boldsymbol{x}) = 0.
-    $$
+    \end{equation}
     The steady states of the system are defined as the points where $f(\boldsymbol{x}) = 0$; therefore, steady-state observations cannot distinguish the dynamics $f(\boldsymbol{x})$ from $c \cdot f(\boldsymbol{x})$. In a model of metabolism, $c \cdot f(\boldsymbol{x})$ describes a system in which all reactions proceed $c$ times faster than in the system with dynamics $f(\boldsymbol{x})$; both systems share the same steady states, and thus cannot be told apart from steady-state data alone. Because scaling all rates by a common factor leaves the observations unchanged, any identifiable quantity must be unchanged by such scaling, which is exactly the case for ratios of rates.
 
     Because only ratios of rates are identifiable, comparing biological conditions can reveal changes only in these ratios. As the logarithm of a ratio is a difference of logarithms, the log-fold-change (LFC) of a rate ratio equals the difference of the individual rate LFCs, for example $\mathrm{LFC}(k_{\mathrm{elong}} / k_{\mathrm{deg}}) = \mathrm{LFC}(k_{\mathrm{elong}}) - \mathrm{LFC}(k_{\mathrm{deg}})$. Such differences of LFCs are therefore the quantities that our inference model estimates.
@@ -220,15 +220,35 @@
 
 
     \section{Inference Model} \label{inference_model}
-    Here will be detailed description of the mathematics behind.
-    \begin{enumerate}
-        \item RNA-seq data are compositional, combined with structural non-identifiability $\to$ we wonly estimated differences of two different LFCs.
-        \item Coverage shape related to nascent and unspliced introns, ommiting $T_{\mathrm{nascent}}$.
-        \item Model parametrization, MLE, LRT, etc.
+    Here we describe our inference model, working with total RNA-seq data. Throughout this section we retain all modeling assumptions introduced in Section 2, and we assume the system is at steady state.
+    
+    \subsection{Observable data - distinguishing transcribing and unspliced introns by coverage}
+    
+    We will start by discussing the key component of our model: the fact that nascent introns $I_{\mathrm{nascent}}$ and unspliced introns $I_{\mathrm{unspliced}}$ produce different read coverage patterns, which allows us to distinguish them, and consequently identify the ratio $k_\mathrm{elong} / k_\mathrm{splice}$ from the data. This core principle was first observed by \cite{ameurTotalRNASequencing2011}, and subsequently utilized in the work of others \citep{jonkersGenomewideDynamicsPol2014, graySnapShotSeqMethodExtracting2014, kawamuraStatisticalInferenceRate2019, debesAgeingassociatedChangesTranscriptional2023}.
+    
+    The read coverage can be decomposed into two parts: the location of reads (the 'shape' of coverage), and the amount of reads (the 'scale' of coverage). We now consider an intron of length $L_{\mathrm{intron}}$; for brevity, we will WLOG assume that the intron starts at position $s=0$. We will model each short sequencing read as a point $x \in \left[0, L_{\mathrm{intron}} \right]$.
+    
+    The shape of read coverage can be then described by probability density $p(x)$, specifying the location of reads. Nascent and unspliced introns produce reads with different location distributions; the overall density $p(x)$ is therefore a mixture distribution:
+    \begin{equation} \label{eq:mixture}
+    p(x) = \pi \cdot p_{\mathrm{nascent}} (x) + (1-\pi) \cdot p_{\mathrm{unspliced}}(x)
+    \end{equation}
+    where $p_{\mathrm{nascent}}$ is the location distribution of reads from nascent introns, $p_{\mathrm{unspliced}}$ is the location distribution of reads from unspliced introns, and $\pi$ is a mixture coefficient giving the proportion of reads from nascent introns:
+    \begin{equation} \label{eq:pi_counts}
+    \pi = \frac{I_{\mathrm{nascent}}}{I_{\mathrm{nascent}} + 2 \cdot I_{\mathrm{unspliced}}}
+    \end{equation}
+    The constant term $2$ accounts for the fact that a nascent intron is, on average, only half transcribed, and therefore produces about half as many reads as a fully transcribed unspliced intron.
+    
+    %TODO: discuss how the constant 2 change for non-constant elongation, and also effective length vs. actual length (relevant for short introns).
 
-    \end{enumerate}
-    Implementation notes (e.g. how we compute intron coverage, or that the whole stuff is implemented in PyTorch + Nextflow pipeline around) will be in 'Supplementary Methods'.
-
+    Plugging in the steady state solution for $I_{\mathrm{nascent}}$ and $I_{\mathrm{unspliced}}$, we obtain:
+    \begin{equation} \label{eq:pi_rates}
+    \pi = \frac{{L_{\mathrm{intron}} \cdot k_\mathrm{splice}}}{L_{\mathrm{intron}} \cdot k_\mathrm{splice} + 2 \cdot k_\mathrm{elong}}
+    \end{equation}
+    We also note that $L_{\mathrm{intron}} \cdot k_\mathrm{elong}^{-1}$ is the time needed to transcribe the intron, and $k_\mathrm{splice}^{-1}$ is the time needed to splice it out. Using that, we may also write
+    \begin{equation} \label{eq:pi_times}
+    \pi = \frac{\text{transcription time}}{\text{transcription time} + 2 \cdot \text{splicing time}}
+    \end{equation}
+    
 
     \section{Results}
     I will apply the model on some data, e.g. ENCODE datasets of stem cell differentiation, or degron mediated protein KD. Will plot and describe the results here. Should mainly serve for illustration, maybe e.g. mutations known to influence elongation speed (Drosophilla and C. Elegans data, maybe human cell lines if data are available).
