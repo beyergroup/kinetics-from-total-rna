@@ -226,7 +226,7 @@
     
     We will start by discussing the key component of our model: the fact that nascent introns $I_{\mathrm{nascent}}$ and unspliced introns $I_{\mathrm{unspliced}}$ produce different read coverage patterns, which allows us to distinguish them, and consequently identify the ratio $k_\mathrm{elong} / k_\mathrm{splice}$ from the data. This core principle was first observed by \cite{ameurTotalRNASequencing2011}, and subsequently utilized in the work of others \citep{jonkersGenomewideDynamicsPol2014, graySnapShotSeqMethodExtracting2014, kawamuraStatisticalInferenceRate2019, debesAgeingassociatedChangesTranscriptional2023}.
     
-    The read coverage can be decomposed into two parts: the location of reads (the 'shape' of coverage), and the amount of reads (the 'scale' of coverage). We now consider an intron of length $L_{\mathrm{intron}}$; for brevity, we will WLOG assume that the intron starts at position $s=0$. We will model each short sequencing read as a point $x \in \left[0, L_{\mathrm{intron}} \right]$.
+    The read coverage can be decomposed into two parts: the location of reads (the 'shape' of coverage), and the amount of reads (the 'scale' of coverage). We now consider an intron of length $L_{\mathrm{intron}}$; without loss of generality, we assume that it starts at position $s=0$. We will model each short sequencing read as a point $x \in \left[0, L_{\mathrm{intron}} \right]$.
     
     The shape of read coverage can be then described by probability density $p(x)$, specifying the location of reads. Nascent and unspliced introns produce reads with different location distributions; the overall density $p(x)$ is therefore a mixture distribution:
     \begin{equation} \label{eq:mixture}
