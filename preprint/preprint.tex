@@ -1,6 +1,18 @@
 \documentclass{article}
 \usepackage{graphicx} % Required for inserting images
 \usepackage{amsmath}
+\setlength{\jot}{10pt} % extra leading between lines of multi-line displays
+
+% Spacing between displayed equations and surrounding text. Appended to \normalsize
+% because the display skips are reset on every font size change.
+\makeatletter
+\g@addto@macro\normalsize{%
+    \setlength{\abovedisplayskip}{12pt plus 3pt minus 4pt}%
+    \setlength{\belowdisplayskip}{12pt plus 3pt minus 4pt}%
+    \setlength{\abovedisplayshortskip}{2pt plus 3pt}%
+    \setlength{\belowdisplayshortskip}{8pt plus 3pt minus 4pt}%
+}
+\makeatother
 \usepackage{amsthm}
 \usepackage{amssymb}
 \usepackage{xcolor}
@@ -144,7 +156,6 @@
     	coltitle=black, colbacktitle=white, % subtle: no colored title bar
     	left=6pt, right=6pt, top=4pt, bottom=4pt,
     	]
-    	\setlength{\jot}{10pt}
     	\begin{subequations}
     	\begin{align}
     		J(0,t) &= k_{\mathrm{init}} \label{eq:initiation}\\
@@ -180,7 +191,6 @@
     	coltitle=black, colbacktitle=white, % subtle: no colored title bar
     	left=6pt, right=6pt, top=4pt, bottom=4pt,
     	]
-    	\setlength{\jot}{10pt}
     	\begin{subequations}
     	\begin{align}
     		\rho(x) &= \frac{k_{\mathrm{init}}}{k_{\mathrm{elong}}} \label{eq:rho_ss}\\
@@ -222,13 +232,13 @@
     \section{Inference Model} \label{inference_model}
     Here we describe our inference model, working with total RNA-seq data. Throughout this section we retain all modeling assumptions introduced in Section 2, and we assume the system is at steady state.
     
-    \subsection{Observable data - distinguishing transcribing and unspliced introns by coverage}
+    \subsection{Distinguishing Nascent and Unspliced Introns by Read Coverage}
     
-    We will start by discussing the key component of our model: the fact that nascent introns $I_{\mathrm{nascent}}$ and unspliced introns $I_{\mathrm{unspliced}}$ produce different read coverage patterns, which allows us to distinguish them, and consequently identify the ratio $k_\mathrm{elong} / k_\mathrm{splice}$ from the data. This core principle was first observed by \cite{ameurTotalRNASequencing2011}, and subsequently utilized in the work of others \citep{jonkersGenomewideDynamicsPol2014, graySnapShotSeqMethodExtracting2014, kawamuraStatisticalInferenceRate2019, debesAgeingassociatedChangesTranscriptional2023}.
+    We will start by discussing the key component of our model: the fact that nascent introns $I_{\mathrm{nascent}}$ and unspliced introns $I_{\mathrm{unspliced}}$ produce different read coverage patterns, which allows us to distinguish them, and consequently identify the ratio $k_\mathrm{elong} / k_\mathrm{splice}$ from the data. This core principle was first observed by \citet{ameurTotalRNASequencing2011}, and subsequently utilized in the work of others \citep{jonkersGenomewideDynamicsPol2014, graySnapShotSeqMethodExtracting2014, kawamuraStatisticalInferenceRate2019, debesAgeingassociatedChangesTranscriptional2023}.
     
-    The read coverage can be decomposed into two parts: the location of reads (the 'shape' of coverage), and the amount of reads (the 'scale' of coverage). We now consider an intron of length $L_{\mathrm{intron}}$; without loss of generality, we assume that it starts at position $s=0$. We will model each short sequencing read as a point $x \in \left[0, L_{\mathrm{intron}} \right]$.
-    
-    The shape of read coverage can be then described by probability density $p(x)$, specifying the location of reads. Nascent and unspliced introns produce reads with different location distributions; the overall density $p(x)$ is therefore a mixture distribution:
+    The read coverage can be decomposed into two parts: the location of reads (the 'shape' of coverage), and the amount of reads (the 'scale' of coverage). Here we focus on the shape; the scale enters our model through the read counts, as described below.
+
+    We now consider an intron of length $L_{\mathrm{intron}}$; without loss of generality, we assume that it starts at position $s=0$. We will model each short sequencing read as a point $x \in \left[0, L_{\mathrm{intron}} \right]$. The shape of read coverage can be then described by probability density $p(x)$, specifying the location of reads. Nascent and unspliced introns produce reads with different location distributions; the overall density $p(x)$ is therefore a mixture distribution:
     \begin{equation} \label{eq:mixture}
     p(x) = \pi \cdot p_{\mathrm{nascent}} (x) + (1-\pi) \cdot p_{\mathrm{unspliced}}(x)
     \end{equation}
@@ -236,9 +246,7 @@
     \begin{equation} \label{eq:pi_counts}
     \pi = \frac{I_{\mathrm{nascent}}}{I_{\mathrm{nascent}} + 2 \cdot I_{\mathrm{unspliced}}}
     \end{equation}
-    The constant term $2$ accounts for the fact that a nascent intron is, on average, only half transcribed, and therefore produces about half as many reads as a fully transcribed unspliced intron.
-    
-    %TODO: discuss how the constant 2 change for non-constant elongation, and also effective length vs. actual length (relevant for short introns).
+    The constant term $2$ accounts for the fact that a nascent intron is, on average, only half transcribed, and therefore produces about half as many reads as a fully transcribed unspliced intron. This follows from the uniform polymerase density \eqref{eq:rho_ss}.
 
     Plugging in the steady state solution for $I_{\mathrm{nascent}}$ and $I_{\mathrm{unspliced}}$, we obtain:
     \begin{equation} \label{eq:pi_rates}
@@ -250,18 +258,33 @@
     \end{equation}
 
 	We will now describe the mixture components $p_{\mathrm{nascent}}(x)$ and $p_{\mathrm{unspliced}}(x)$. We begin with $p_{\mathrm{unspliced}}(x)$: these reads come from fully transcribed introns, and we simply model their location by a uniform distribution
-	
-	\begin{equation}
-	p_{\mathrm{unspliced}}(x) = \frac{1}{L_{\mathrm{intron}}} 		
+	\begin{equation} \label{eq:p_unspliced}
+	p_{\mathrm{unspliced}}(x) = \frac{1}{L_{\mathrm{intron}}}
 	\end{equation}
 	On the other hand, $p_{\mathrm{nascent}}(x)$ is produced by nascent introns, which have not finished transcribing the intron interval yet. Due to this, reads at location $x$ can be produced only from nascent introns that are already elongated past $x$. This gives us:
 	\begin{equation} \label{eq:nascent_density_propto}
 	p_{\mathrm{nascent}}(x)  \propto \int_{x}^{L_{\mathrm{intron}}} \rho (z) dz
 	\end{equation}
 	The steady state solution \eqref{eq:rho_ss} gives a polymerase density $\rho(x)$ that is constant over the gene body. Carrying out the integral in \eqref{eq:nascent_density_propto} and normalizing to a probability density gives us:
-	\begin{equation}
+	\begin{equation} \label{eq:p_nascent}
 	p_{\mathrm{nascent}}(x) = \frac{2 L_{\mathrm{intron}} -2x}{L_{\mathrm{intron}}^2}
 	\end{equation}
+
+	The two mixture components thus have distinctly different shapes: a linearly decreasing density for nascent introns, and a uniform density for unspliced introns. The shape of the observed intron coverage is therefore informative about the mixture coefficient $\pi$, and, through \eqref{eq:pi_rates}, about the ratio $k_\mathrm{elong} / k_\mathrm{splice}$.
+
+	We note that the same argument can be also applied to whole transcripts: the fraction of exonic reads originating from nascent transcripts is
+	\begin{equation} \label{eq:pi_gene}
+		\begin{split}
+			\pi_{\mathrm{gene}} &= \frac{T_{\mathrm{nascent}}}{T_{\mathrm{nascent}} + 2 \cdot T_{\mathrm{mature}}}
+			= \frac{L_{\mathrm{gene}} \cdot k_{\mathrm{deg}}}{L_{\mathrm{gene}} \cdot k_{\mathrm{deg}} + 2 \cdot k_{\mathrm{elong}}} \\
+			&= \frac{\text{gene transcription time}}{\text{gene transcription time} + 2 \cdot \text{mean transcript lifetime}}
+		\end{split}
+	\end{equation}
+	The mature transcripts produce reads with uniform distribution of their location, while nascent transcripts produce reads with coverage decreasing over the gene body, analogously to the case of intron coverage we described above. However, exons may be also spliced out in alternative splicing, which affects the resulting exon coverage and complicates its use for inference.
+
+	For most genes, the transcription time is much shorter than the mean transcript lifetime, and only a few percent of exonic reads therefore originate from nascent transcripts. In our inference model, we neglect the nascent transcript fraction, and assume that all exonic reads are originating from mature transcripts. A further quantification of the effect on our inference model is provided in the section \nameref{supplementary_methods}.
+	
+	Finally, read coverage is also affected by technical factors, such as read mappability or GC content \citep{derrienFastComputationApplications2012, loveModelingRNAseqFragment2016}. The observed coverage is therefore distorted in a sequence-dependent manner, so that the location distributions derived above are only approximate. As such distortions are determined by the underlying sequence, they affect all samples in the same way; we discuss their impact on our estimates in the section \nameref{supplementary_methods}.
 	
 	
 	
