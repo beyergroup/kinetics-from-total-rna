@@ -1,16 +1,17 @@
+from dataclasses import dataclass
+from typing import Callable, Optional, OrderedDict
+
 import numpy as np
 import pandas as pd
 import scipy
 import torch
-from dataclasses import dataclass
 from scipy import stats
 from torch import nn, optim
 from torch.func import functional_call, hessian
-from typing import Callable, Optional, OrderedDict
 
-from pol_ii_speed_modeling.pol_ii_model import GeneData, IntronData, DatasetMetadata, Pol2TotalLoss, Pol2Model, \
-    TestableParameters, LRTSpecification, SplicingModel, CoverageLoss, \
-    GlobalGeneData, GlobalPol2Model
+from rna_kinetics.data import GeneData, IntronData, DatasetMetadata
+from rna_kinetics.models import RNAKineticsLoss, RNAKineticsModel, TestableParameters, LRTSpecification, IntronCoverageModel, \
+    CoverageLoss, GlobalGeneData, GlobalPol2Model
 
 LOSS_CLAMP_VALUE = 1e30
 
@@ -106,7 +107,7 @@ def train_model(
 
 
 def _make_pol2_closures(
-        model: Pol2Model,
+        model: RNAKineticsModel,
         optimizer: optim.Optimizer,
         gene_data: GeneData,
         dataset_metadata: DatasetMetadata,
@@ -114,7 +115,7 @@ def _make_pol2_closures(
         regularization_coefficients_beta: Optional[torch.Tensor] = None,
         regularization_coefficients_gamma: Optional[torch.Tensor] = None,
 ) -> tuple[Callable[[], torch.Tensor], Callable[[], torch.Tensor]]:
-    pol_2_total_loss = Pol2TotalLoss().to(next(model.parameters()).device)
+    pol_2_total_loss = RNAKineticsLoss().to(next(model.parameters()).device)
 
     def _compute_loss() -> torch.Tensor:
         predicted_reads_exon, predicted_reads_intron, pi = model(
@@ -132,9 +133,9 @@ def _make_pol2_closures(
             pi=pi,
         )
         if regularization_coefficients_beta is not None:
-            loss += torch.sum(regularization_coefficients_beta * torch.square(model.beta))
+            loss += torch.sum(regularization_coefficients_beta * torch.square(model.lfc_elong_over_deg))
         if regularization_coefficients_gamma is not None:
-            loss += torch.sum(regularization_coefficients_gamma * torch.square(model.gamma))
+            loss += torch.sum(regularization_coefficients_gamma * torch.square(model.lfc_splice_over_deg))
         return loss
 
     def closure() -> torch.Tensor:
@@ -153,7 +154,7 @@ def _make_pol2_closures(
 
 
 def make_splicing_closures(
-        model: SplicingModel,
+        model: IntronCoverageModel,
         optimizer: optim.Optimizer,
         coverage: torch.Tensor,
         design_matrix: torch.Tensor,
@@ -263,9 +264,9 @@ def get_model_results(gene_data: GeneData,
     gene_data = gene_data.to(device)
     dataset_metadata = dataset_metadata.to(device)
 
-    model_full = Pol2Model(feature_names=dataset_metadata.feature_names,
-                           intron_names=gene_data.intron_names,
-                           intron_specific_lfc=intron_specific_lfc).to(device)
+    model_full = RNAKineticsModel(feature_names=dataset_metadata.feature_names,
+                                  intron_names=gene_data.intron_names,
+                                  intron_specific_lfc=intron_specific_lfc).to(device)
     model_full.initialize_parameters(gene_data, dataset_metadata.library_sizes, dataset_metadata.design_matrix)
 
     optimizer_full = make_lbfgs_optimizer(model_full)
@@ -282,7 +283,7 @@ def get_model_results(gene_data: GeneData,
         'training_converged_within_max_epochs_full_model'] = training_results_full.converged_within_max_epochs
 
     # Wald test
-    pol_2_total_loss = Pol2TotalLoss().to(device)
+    pol_2_total_loss = RNAKineticsLoss().to(device)
 
     def pol2_loss_by_params(params):
         predicted_reads_exon, predicted_reads_intron, pi = functional_call(
@@ -311,10 +312,10 @@ def get_model_results(gene_data: GeneData,
                                                      tested_parameter=tested_parameter,
                                                      tested_intron=intron_name)
 
-                model_reduced = Pol2Model(feature_names=dataset_metadata.feature_names,
-                                          intron_names=gene_data.intron_names,
-                                          intron_specific_lfc=intron_specific_lfc,
-                                          lrt_specification=lrt_specification).to(device)
+                model_reduced = RNAKineticsModel(feature_names=dataset_metadata.feature_names,
+                                                 intron_names=gene_data.intron_names,
+                                                 intron_specific_lfc=intron_specific_lfc,
+                                                 lrt_specification=lrt_specification).to(device)
 
                 state_dict_model_full = model_full.state_dict()
                 hot_start_state_dict = model_reduced.state_dict()
@@ -385,9 +386,9 @@ def get_regularized_model_results(gene_data: GeneData,
     dataset_metadata = dataset_metadata.to(device)
     regularization_coefficients_df = regularization_coefficients_df.set_index(['parameter_type', 'feature_name'])
 
-    model_regularized = Pol2Model(feature_names=dataset_metadata.feature_names,
-                                  intron_names=gene_data.intron_names,
-                                  intron_specific_lfc=intron_specific_lfc).to(device)
+    model_regularized = RNAKineticsModel(feature_names=dataset_metadata.feature_names,
+                                         intron_names=gene_data.intron_names,
+                                         intron_specific_lfc=intron_specific_lfc).to(device)
     model_regularized.load_state_dict(hot_start_state_dict)
 
     regularization_coefficients_beta = torch.zeros((len(model_regularized.feature_names), 1)).to(device)
@@ -428,7 +429,7 @@ def get_splicing_model_results(
     coverage = coverage.to(device)
     dataset_metadata = dataset_metadata.to(device)
 
-    model_full = SplicingModel(
+    model_full = IntronCoverageModel(
         feature_names=dataset_metadata.feature_names,
         intron_names=intron_names,
     ).to(device)
@@ -463,7 +464,7 @@ def get_splicing_model_results(
         num_reduced_features = reduced_matrix.shape[1]
         placeholder_names = [f'reduced_feature_{i}' for i in range(num_reduced_features)]
 
-        model_reduced = SplicingModel(
+        model_reduced = IntronCoverageModel(
             feature_names=placeholder_names,
             intron_names=intron_names,
         ).to(device)
@@ -515,7 +516,7 @@ def make_global_pol2_closures(
         dataset_metadata: DatasetMetadata,
         reduced_matrix: Optional[torch.Tensor] = None,
 ) -> tuple[Callable[[], torch.Tensor], Callable[[], torch.Tensor]]:
-    pol_2_total_loss = Pol2TotalLoss().to(next(model.parameters()).device)
+    pol_2_total_loss = RNAKineticsLoss().to(next(model.parameters()).device)
 
     def _compute_loss() -> torch.Tensor:
         predicted_reads_exon, predicted_reads_intron, pi = model(
@@ -577,7 +578,8 @@ def _train_two_stage(
         param.requires_grad_(True)
     optimizer_stage_2 = make_lbfgs_optimizer(model)
     closure_stage_2, eval_stage_2 = make_closures(optimizer_stage_2)
-    model, training_results = train_model(model, optimizer_stage_2, closure_stage_2, eval_stage_2, max_epochs=500, verbose=verbose)
+    model, training_results = train_model(model, optimizer_stage_2, closure_stage_2, eval_stage_2, max_epochs=500,
+                                          verbose=verbose)
     return model, training_results
 
 
@@ -685,7 +687,7 @@ def get_global_splicing_model_results(
     coverage = coverage.to(device)
     dataset_metadata = dataset_metadata.to(device)
 
-    model_full = SplicingModel(
+    model_full = IntronCoverageModel(
         feature_names=dataset_metadata.feature_names,
         intron_names=intron_names,
     ).to(device)
@@ -711,7 +713,7 @@ def get_global_splicing_model_results(
         num_reduced_features = reduced_matrix.shape[1]
         placeholder_names = [f'reduced_feature_{i}' for i in range(num_reduced_features)]
 
-        model_reduced = SplicingModel(
+        model_reduced = IntronCoverageModel(
             feature_names=placeholder_names,
             intron_names=intron_names,
         ).to(device)
@@ -766,7 +768,7 @@ def get_regularized_splicing_model_results(
     dataset_metadata = dataset_metadata.to(device)
     regularization_coefficients_df = regularization_coefficients_df.set_index(['parameter_type', 'feature_name'])
 
-    model_regularized = SplicingModel(
+    model_regularized = IntronCoverageModel(
         feature_names=dataset_metadata.feature_names,
         intron_names=input_data.intron_names,
     ).to(device)
