@@ -119,7 +119,7 @@ class RNAKineticsModel(nn.Module):
             best_pi = pi_grid[coverage_loss_grid.argmin(dim=0)]
             self.intercept_pi_logit.data.copy_(torch.logit(best_pi, eps=pi_eps))
 
-            intercept_intron_vector = torch.log(gene_data.intron_reads.mean(dim=0) / library_sizes.mean() / 2)
+            intercept_intron_vector = torch.log(gene_data.intron_reads.mean(dim=0) / library_sizes.mean() * (1 - best_pi))
             self.intercept_intron.data.copy_(intercept_intron_vector)
 
     def forward(self,
