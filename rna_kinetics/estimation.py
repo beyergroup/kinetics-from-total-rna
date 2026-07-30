@@ -9,9 +9,9 @@ from scipy import stats
 from torch import nn, optim
 from torch.func import functional_call, hessian
 
-from rna_kinetics.data import GeneData, IntronData, DatasetMetadata
-from rna_kinetics.models import RNAKineticsLoss, RNAKineticsModel, TestableParameters, LRTSpecification, IntronCoverageModel, \
-    CoverageLoss, GlobalGeneData, GlobalPol2Model
+from rna_kinetics.data import GeneData, IntronData, DatasetMetadata, GlobalGeneData
+from rna_kinetics.models import RNAKineticsLoss, RNAKineticsModel, TestableParameters, LRTSpecification, \
+    IntronCoverageModel, CoverageLoss, GlobalRNAKineticsModel, TESTED_PARAMETER_TO_ATTRIBUTE
 
 LOSS_CLAMP_VALUE = 1e30
 
@@ -165,7 +165,7 @@ def make_splicing_closures(
     def _compute_loss() -> torch.Tensor:
         loss = coverage_loss_fn(model(design_matrix), coverage)
         if regularization_coefficients_lfc is not None:
-            loss += torch.sum(regularization_coefficients_lfc * torch.square(model.lfc))
+            loss += torch.sum(regularization_coefficients_lfc * torch.square(model.lfc_elong_over_splice))
         return loss
 
     def closure() -> torch.Tensor:
@@ -323,12 +323,13 @@ def get_model_results(gene_data: GeneData,
                     hot_start_state_dict[key] = value
 
                 if reduced_design_matrix.shape[1] > 0:
+                    tested_attribute = TESTED_PARAMETER_TO_ATTRIBUTE[lrt_specification.tested_parameter]
                     if lrt_specification.tested_parameter == TestableParameters.ALPHA:
-                        lfc_full_model = state_dict_model_full[lrt_specification.tested_parameter]
+                        lfc_full_model = state_dict_model_full[tested_attribute]
                     else:
                         intron_index = 0 if not model_full.intron_specific_lfc else model_full.intron_names.index(
                             lrt_specification.tested_intron)
-                        lfc_full_model = state_dict_model_full[lrt_specification.tested_parameter][:, intron_index]
+                        lfc_full_model = state_dict_model_full[tested_attribute][:, intron_index]
                     # Initialize LFC in reduced model via least squares
                     hot_start_state_dict['reduced_lfc'] = torch.linalg.lstsq(reduced_design_matrix,
                                                                              dataset_metadata.design_matrix @ lfc_full_model).solution
@@ -433,7 +434,7 @@ def get_splicing_model_results(
         feature_names=dataset_metadata.feature_names,
         intron_names=intron_names,
     ).to(device)
-    model_full.initialize_theta(coverage)
+    model_full.initialize_parameters(coverage)
 
     optimizer_full = make_lbfgs_optimizer(model_full)
     closure_full, evaluate_loss_full = make_splicing_closures(
@@ -470,10 +471,10 @@ def get_splicing_model_results(
         ).to(device)
 
         with torch.no_grad():
-            model_reduced.theta.data.copy_(model_full.theta.data)
+            model_reduced.intercept_pi_logit.data.copy_(model_full.theta.data)
             if num_reduced_features > 0:
                 full_lfc_contribution = dataset_metadata.design_matrix @ model_full.lfc
-                model_reduced.lfc.data.copy_(
+                model_reduced.lfc_elong_over_splice.data.copy_(
                     torch.linalg.lstsq(reduced_matrix, full_lfc_contribution).solution
                 )
 
@@ -510,7 +511,7 @@ def get_splicing_model_results(
 
 
 def make_global_pol2_closures(
-        model: GlobalPol2Model,
+        model: GlobalRNAKineticsModel,
         optimizer: optim.Optimizer,
         global_gene_data: GlobalGeneData,
         dataset_metadata: DatasetMetadata,
@@ -592,7 +593,7 @@ def get_global_pol2_model_results(
     global_gene_data = global_gene_data.to(device)
     dataset_metadata = dataset_metadata.to(device)
 
-    model = GlobalPol2Model(
+    model = GlobalRNAKineticsModel(
         feature_names=dataset_metadata.feature_names,
         gene_names=global_gene_data.gene_names,
         intron_names=global_gene_data.intron_names,
@@ -602,7 +603,7 @@ def get_global_pol2_model_results(
 
     model, training_results = _train_two_stage(
         model,
-        global_param_names={'beta', 'gamma'},
+        global_param_names={'lfc_elong_over_deg', 'lfc_splice_over_deg'},
         make_closures=lambda opt: make_global_pol2_closures(model, opt, global_gene_data, dataset_metadata),
         label='Global Pol2 | full model',
         verbose=verbose,
@@ -623,7 +624,7 @@ def get_global_pol2_model_results(
                 num_features_reduced_matrix=reduced_matrix.shape[1],
                 tested_parameter=tested_parameter,
             )
-            model_reduced = GlobalPol2Model(
+            model_reduced = GlobalRNAKineticsModel(
                 feature_names=feature_names,
                 gene_names=global_gene_data.gene_names,
                 intron_names=global_gene_data.intron_names,
@@ -645,7 +646,7 @@ def get_global_pol2_model_results(
 
             model_reduced, results_reduced = _train_two_stage(
                 model_reduced,
-                global_param_names={'beta', 'gamma', 'reduced_lfc'},
+                global_param_names={'lfc_elong_over_deg', 'lfc_splice_over_deg', 'reduced_lfc'},
                 make_closures=lambda opt: make_global_pol2_closures(
                     model_reduced, opt, global_gene_data, dataset_metadata, reduced_matrix,
                 ),
@@ -691,11 +692,11 @@ def get_global_splicing_model_results(
         feature_names=dataset_metadata.feature_names,
         intron_names=intron_names,
     ).to(device)
-    model_full.initialize_theta(coverage)
+    model_full.initialize_parameters(coverage)
 
     model_full, results_full = _train_two_stage(
         model_full,
-        global_param_names={'lfc'},
+        global_param_names={'lfc_elong_over_splice'},
         make_closures=lambda opt: make_splicing_closures(model_full, opt, coverage, dataset_metadata.design_matrix),
         label='Global splicing | full model',
         verbose=verbose,
@@ -719,16 +720,16 @@ def get_global_splicing_model_results(
         ).to(device)
 
         with torch.no_grad():
-            model_reduced.theta.data.copy_(model_full.theta.data)
+            model_reduced.intercept_pi_logit.data.copy_(model_full.theta.data)
             if num_reduced_features > 0:
                 full_lfc_contribution = dataset_metadata.design_matrix @ model_full.lfc
-                model_reduced.lfc.data.copy_(
+                model_reduced.lfc_elong_over_splice.data.copy_(
                     torch.linalg.lstsq(reduced_matrix, full_lfc_contribution).solution
                 )
 
         model_reduced, results_reduced = _train_two_stage(
             model_reduced,
-            global_param_names={'lfc'},
+            global_param_names={'lfc_elong_over_splice'},
             make_closures=lambda opt: make_splicing_closures(model_reduced, opt, coverage, reduced_matrix),
             label=f'Global splicing | LRT {lrt_row["test_id"]}',
             verbose=verbose,
