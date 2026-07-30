@@ -16,7 +16,6 @@ class DatasetMetadata:
     sample_names: list[str]
     lrt_metadata: pd.DataFrame
     reduced_matrices: dict[str, torch.Tensor]
-    num_coverage_bins: int = 100
 
     def to(self, device):
         self.design_matrix = self.design_matrix.to(device)

@@ -11,7 +11,8 @@ from torch.func import functional_call, hessian
 
 from rna_kinetics.data import GeneData, IntronData, DatasetMetadata, GlobalGeneData
 from rna_kinetics.models import RNAKineticsLoss, RNAKineticsModel, TestableParameters, LRTSpecification, \
-    IntronCoverageModel, CoverageLoss, GlobalRNAKineticsModel, TESTED_PARAMETER_TO_ATTRIBUTE
+    IntronCoverageModel, CoverageLoss, GlobalRNAKineticsModel, TESTED_PARAMETER_TO_ATTRIBUTE, \
+    PARAMETER_WIRE_NAMES
 
 LOSS_CLAMP_VALUE = 1e30
 
@@ -31,8 +32,11 @@ class TrainingResults:
 class CacheForRegularization:
     training_input_per_gene: list[tuple[GeneData, StateDict]]
     dataset_metadata: DatasetMetadata
-    intron_specific_lfc: Optional[bool] = None  # Pol2 model only
-    intron_specific_splicing: bool = False
+    intron_specific_lfc: Optional[bool] = None  # RNAKineticsModel only: LFC parameter shape
+
+    # IntronCoverageModel only: whether its single LFC belongs to one named intron rather than
+    # being shared across a gene's introns. Not an architecture flag -- it only affects labelling.
+    lfc_is_intron_specific: bool = False
 
 
 def make_lbfgs_optimizer(model: nn.Module) -> optim.LBFGS:
@@ -106,81 +110,85 @@ def train_model(
     return model, training_results
 
 
-def _make_pol2_closures(
+def _make_closures(
+        optimizer: optim.Optimizer,
+        compute_loss: Callable[[], torch.Tensor],
+) -> tuple[Callable[[], torch.Tensor], Callable[[], torch.Tensor]]:
+    """
+    Wrap a loss function as the (closure, evaluate_loss) pair train_model expects.
+
+    A non-finite loss is reported to the optimizer as LOSS_CLAMP_VALUE rather than propagated,
+    so that LBFGS' line search backs off instead of stepping on a NaN gradient.
+    """
+
+    def closure() -> torch.Tensor:
+        optimizer.zero_grad()
+        loss = compute_loss()
+        if not torch.isfinite(loss):
+            return torch.as_tensor(LOSS_CLAMP_VALUE, dtype=loss.dtype, device=loss.device)
+        loss.backward()
+        return loss
+
+    def evaluate_loss() -> torch.Tensor:
+        with torch.no_grad():
+            return compute_loss()
+
+    return closure, evaluate_loss
+
+
+def _make_rna_kinetics_closures(
         model: RNAKineticsModel,
         optimizer: optim.Optimizer,
         gene_data: GeneData,
         dataset_metadata: DatasetMetadata,
         reduced_matrix: Optional[torch.Tensor] = None,
-        regularization_coefficients_beta: Optional[torch.Tensor] = None,
-        regularization_coefficients_gamma: Optional[torch.Tensor] = None,
+        regularization_coefficients_elong_over_deg: Optional[torch.Tensor] = None,
+        regularization_coefficients_splice_over_deg: Optional[torch.Tensor] = None,
 ) -> tuple[Callable[[], torch.Tensor], Callable[[], torch.Tensor]]:
-    pol_2_total_loss = RNAKineticsLoss().to(next(model.parameters()).device)
+    rna_kinetics_loss = RNAKineticsLoss(
+        num_position_coverage=gene_data.coverage.shape[2]
+    ).to(next(model.parameters()).device)
 
     def _compute_loss() -> torch.Tensor:
-        predicted_reads_exon, predicted_reads_intron, pi = model(
+        predicted_reads_exon, predicted_reads_intron, predicted_pi = model(
             design_matrix=dataset_metadata.design_matrix,
             log_library_sizes=dataset_metadata.log_library_sizes,
             isoform_length_offset=gene_data.isoform_length_offset,
             reduced_design_matrix=reduced_matrix,
         )
-        loss = pol_2_total_loss(
+        loss = rna_kinetics_loss(
             reads_exon=gene_data.exon_reads,
-            reads_introns=gene_data.intron_reads,
-            coverage=gene_data.coverage,
+            reads_intron=gene_data.intron_reads,
+            intron_coverage=gene_data.coverage,
             predicted_reads_exon=predicted_reads_exon,
             predicted_reads_intron=predicted_reads_intron,
-            pi=pi,
+            predicted_pi=predicted_pi,
         )
-        if regularization_coefficients_beta is not None:
-            loss += torch.sum(regularization_coefficients_beta * torch.square(model.lfc_elong_over_deg))
-        if regularization_coefficients_gamma is not None:
-            loss += torch.sum(regularization_coefficients_gamma * torch.square(model.lfc_splice_over_deg))
+        if regularization_coefficients_elong_over_deg is not None:
+            loss += torch.sum(regularization_coefficients_elong_over_deg * torch.square(model.lfc_elong_over_deg))
+        if regularization_coefficients_splice_over_deg is not None:
+            loss += torch.sum(regularization_coefficients_splice_over_deg * torch.square(model.lfc_splice_over_deg))
         return loss
 
-    def closure() -> torch.Tensor:
-        optimizer.zero_grad()
-        loss = _compute_loss()
-        if not torch.isfinite(loss):
-            return torch.as_tensor(LOSS_CLAMP_VALUE, dtype=loss.dtype, device=loss.device)
-        loss.backward()
-        return loss
-
-    def evaluate_loss() -> torch.Tensor:
-        with torch.no_grad():
-            return _compute_loss()
-
-    return closure, evaluate_loss
+    return _make_closures(optimizer, _compute_loss)
 
 
-def make_splicing_closures(
+def _make_intron_coverage_closures(
         model: IntronCoverageModel,
         optimizer: optim.Optimizer,
         coverage: torch.Tensor,
         design_matrix: torch.Tensor,
-        regularization_coefficients_lfc: Optional[torch.Tensor] = None,
+        regularization_coefficients_elong_over_splice: Optional[torch.Tensor] = None,
 ) -> tuple[Callable[[], torch.Tensor], Callable[[], torch.Tensor]]:
     coverage_loss_fn = CoverageLoss(num_position_coverage=coverage.shape[2]).to(coverage.device)
 
     def _compute_loss() -> torch.Tensor:
         loss = coverage_loss_fn(model(design_matrix), coverage)
-        if regularization_coefficients_lfc is not None:
-            loss += torch.sum(regularization_coefficients_lfc * torch.square(model.lfc_elong_over_splice))
+        if regularization_coefficients_elong_over_splice is not None:
+            loss += torch.sum(regularization_coefficients_elong_over_splice * torch.square(model.lfc_elong_over_splice))
         return loss
 
-    def closure() -> torch.Tensor:
-        optimizer.zero_grad()
-        loss = _compute_loss()
-        if not torch.isfinite(loss):
-            return torch.as_tensor(LOSS_CLAMP_VALUE, dtype=loss.dtype, device=loss.device)
-        loss.backward()
-        return loss
-
-    def evaluate_loss() -> torch.Tensor:
-        with torch.no_grad():
-            return _compute_loss()
-
-    return closure, evaluate_loss
+    return _make_closures(optimizer, _compute_loss)
 
 
 def flatten_hessian_dict(hessian_dict, model_parameters):
@@ -270,7 +278,7 @@ def get_model_results(gene_data: GeneData,
     model_full.initialize_parameters(gene_data, dataset_metadata.library_sizes, dataset_metadata.design_matrix)
 
     optimizer_full = make_lbfgs_optimizer(model_full)
-    closure_full, evaluate_loss_full = _make_pol2_closures(
+    closure_full, evaluate_loss_full = _make_rna_kinetics_closures(
         model_full, optimizer_full, gene_data, dataset_metadata,
     )
     model_full, training_results_full = train_model(model_full, optimizer_full, closure_full, evaluate_loss_full)
@@ -283,21 +291,21 @@ def get_model_results(gene_data: GeneData,
         'training_converged_within_max_epochs_full_model'] = training_results_full.converged_within_max_epochs
 
     # Wald test
-    pol_2_total_loss = RNAKineticsLoss().to(device)
+    rna_kinetics_loss = RNAKineticsLoss(num_position_coverage=gene_data.coverage.shape[2]).to(device)
 
-    def pol2_loss_by_params(params):
-        predicted_reads_exon, predicted_reads_intron, pi = functional_call(
+    def rna_kinetics_loss_by_params(params):
+        predicted_reads_exon, predicted_reads_intron, predicted_pi = functional_call(
             model_full, params,
             (dataset_metadata.design_matrix, dataset_metadata.log_library_sizes, gene_data.isoform_length_offset),
         )
-        return pol_2_total_loss(reads_exon=gene_data.exon_reads,
-                                reads_introns=gene_data.intron_reads,
-                                coverage=gene_data.coverage,
+        return rna_kinetics_loss(reads_exon=gene_data.exon_reads,
+                                reads_intron=gene_data.intron_reads,
+                                intron_coverage=gene_data.coverage,
                                 predicted_reads_exon=predicted_reads_exon,
                                 predicted_reads_intron=predicted_reads_intron,
-                                pi=pi)
+                                predicted_pi=predicted_pi)
 
-    fisher_information_matrix = get_fisher_information_matrix(model_full, pol2_loss_by_params)
+    fisher_information_matrix = get_fisher_information_matrix(model_full, rna_kinetics_loss_by_params)
     model_param_df = add_wald_test_results(model_param_df, fisher_information_matrix)
     model_param_df = model_param_df.set_index(["parameter_type", "feature_name", "intron_name"], drop=False)
 
@@ -337,7 +345,7 @@ def get_model_results(gene_data: GeneData,
                 model_reduced.load_state_dict(hot_start_state_dict)
 
                 optimizer_reduced = make_lbfgs_optimizer(model_reduced)
-                closure_reduced, evaluate_loss_reduced = _make_pol2_closures(
+                closure_reduced, evaluate_loss_reduced = _make_rna_kinetics_closures(
                     model_reduced, optimizer_reduced, gene_data, dataset_metadata,
                     reduced_matrix=reduced_design_matrix,
                 )
@@ -392,19 +400,19 @@ def get_regularized_model_results(gene_data: GeneData,
                                          intron_specific_lfc=intron_specific_lfc).to(device)
     model_regularized.load_state_dict(hot_start_state_dict)
 
-    regularization_coefficients_beta = torch.zeros((len(model_regularized.feature_names), 1)).to(device)
-    regularization_coefficients_gamma = torch.zeros((len(model_regularized.feature_names), 1)).to(device)
+    regularization_coefficients_elong_over_deg = torch.zeros((len(model_regularized.feature_names), 1)).to(device)
+    regularization_coefficients_splice_over_deg = torch.zeros((len(model_regularized.feature_names), 1)).to(device)
     for feature_index, feature_name in enumerate(model_regularized.feature_names):
-        regularization_coefficients_beta[feature_index] = regularization_coefficients_df.loc[('beta', feature_name)][
-            'lambda']
-        regularization_coefficients_gamma[feature_index] = regularization_coefficients_df.loc[('gamma', feature_name)][
-            'lambda']
+        regularization_coefficients_elong_over_deg[feature_index] = regularization_coefficients_df.loc[
+            (PARAMETER_WIRE_NAMES['lfc_elong_over_deg'], feature_name)]['lambda']
+        regularization_coefficients_splice_over_deg[feature_index] = regularization_coefficients_df.loc[
+            (PARAMETER_WIRE_NAMES['lfc_splice_over_deg'], feature_name)]['lambda']
 
     optimizer_regularized = make_lbfgs_optimizer(model_regularized)
-    closure_regularized, evaluate_loss_regularized = _make_pol2_closures(
+    closure_regularized, evaluate_loss_regularized = _make_rna_kinetics_closures(
         model_regularized, optimizer_regularized, gene_data, dataset_metadata,
-        regularization_coefficients_beta=regularization_coefficients_beta,
-        regularization_coefficients_gamma=regularization_coefficients_gamma,
+        regularization_coefficients_elong_over_deg=regularization_coefficients_elong_over_deg,
+        regularization_coefficients_splice_over_deg=regularization_coefficients_splice_over_deg,
     )
     model_regularized, training_results_regularized = train_model(
         model_regularized, optimizer_regularized, closure_regularized, evaluate_loss_regularized,
@@ -426,18 +434,23 @@ def get_splicing_model_results(
         device: str = 'cpu',
         verbose: bool = False,
         compute_wald_test: bool = True,
+        lfc_is_intron_specific: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     coverage = coverage.to(device)
     dataset_metadata = dataset_metadata.to(device)
 
+    # The intron the LFC is reported under; None when it is shared across the gene's introns.
+    lfc_intron_name = intron_names[0] if lfc_is_intron_specific else None
+
     model_full = IntronCoverageModel(
         feature_names=dataset_metadata.feature_names,
         intron_names=intron_names,
+        lfc_is_intron_specific=lfc_is_intron_specific,
     ).to(device)
     model_full.initialize_parameters(coverage)
 
     optimizer_full = make_lbfgs_optimizer(model_full)
-    closure_full, evaluate_loss_full = make_splicing_closures(
+    closure_full, evaluate_loss_full = _make_intron_coverage_closures(
         model_full, optimizer_full, coverage, dataset_metadata.design_matrix,
     )
     model_full, results_full = train_model(model_full, optimizer_full, closure_full, evaluate_loss_full,
@@ -468,18 +481,19 @@ def get_splicing_model_results(
         model_reduced = IntronCoverageModel(
             feature_names=placeholder_names,
             intron_names=intron_names,
+            lfc_is_intron_specific=lfc_is_intron_specific,
         ).to(device)
 
         with torch.no_grad():
-            model_reduced.intercept_pi_logit.data.copy_(model_full.theta.data)
+            model_reduced.intercept_pi_logit.data.copy_(model_full.intercept_pi_logit.data)
             if num_reduced_features > 0:
-                full_lfc_contribution = dataset_metadata.design_matrix @ model_full.lfc
+                full_lfc_contribution = dataset_metadata.design_matrix @ model_full.lfc_elong_over_splice
                 model_reduced.lfc_elong_over_splice.data.copy_(
                     torch.linalg.lstsq(reduced_matrix, full_lfc_contribution).solution
                 )
 
         optimizer_reduced = make_lbfgs_optimizer(model_reduced)
-        closure_reduced, evaluate_loss_reduced = make_splicing_closures(
+        closure_reduced, evaluate_loss_reduced = _make_intron_coverage_closures(
             model_reduced, optimizer_reduced, coverage, reduced_matrix,
         )
         model_reduced, results_reduced = train_model(
@@ -488,14 +502,16 @@ def get_splicing_model_results(
         )
 
         lfc_positive = 0.0 if pd.isna(lrt_row['lfc_column_positive']) else \
-            model_param_df.loc[('lfc', lrt_row['lfc_column_positive'], None)]['value']
+            model_param_df.loc[(PARAMETER_WIRE_NAMES['lfc_elong_over_splice'],
+                                lrt_row['lfc_column_positive'], lfc_intron_name)]['value']
         lfc_negative = 0.0 if pd.isna(lrt_row['lfc_column_negative']) else \
-            model_param_df.loc[('lfc', lrt_row['lfc_column_negative'], None)]['value']
+            model_param_df.loc[(PARAMETER_WIRE_NAMES['lfc_elong_over_splice'],
+                                lrt_row['lfc_column_negative'], lfc_intron_name)]['value']
 
         chi2_stat = 2 * (results_reduced.final_loss - results_full.final_loss)
         test_result = lrt_row.to_dict()
-        test_result['tested_parameter'] = 'lfc'
-        test_result['intron_name'] = None
+        test_result['tested_parameter'] = PARAMETER_WIRE_NAMES['lfc_elong_over_splice']
+        test_result['intron_name'] = lfc_intron_name
         test_result['lfc'] = lfc_positive - lfc_negative
         test_result['loss_full_model'] = results_full.final_loss
         test_result['loss_reduced_model'] = results_reduced.final_loss
@@ -510,44 +526,34 @@ def get_splicing_model_results(
     return model_param_df, pd.DataFrame(test_results_list), model_full.state_dict()
 
 
-def make_global_pol2_closures(
+def _make_global_rna_kinetics_closures(
         model: GlobalRNAKineticsModel,
         optimizer: optim.Optimizer,
         global_gene_data: GlobalGeneData,
         dataset_metadata: DatasetMetadata,
         reduced_matrix: Optional[torch.Tensor] = None,
 ) -> tuple[Callable[[], torch.Tensor], Callable[[], torch.Tensor]]:
-    pol_2_total_loss = RNAKineticsLoss().to(next(model.parameters()).device)
+    rna_kinetics_loss = RNAKineticsLoss(
+        num_position_coverage=global_gene_data.coverage.shape[2]
+    ).to(next(model.parameters()).device)
 
     def _compute_loss() -> torch.Tensor:
-        predicted_reads_exon, predicted_reads_intron, pi = model(
+        predicted_reads_exon, predicted_reads_intron, predicted_pi = model(
             design_matrix=dataset_metadata.design_matrix,
             log_library_sizes=dataset_metadata.log_library_sizes,
             isoform_length_offset=global_gene_data.isoform_length_offset,
             reduced_design_matrix=reduced_matrix,
         )
-        return pol_2_total_loss(
+        return rna_kinetics_loss(
             reads_exon=global_gene_data.exon_reads,
-            reads_introns=global_gene_data.intron_reads,
-            coverage=global_gene_data.coverage,
+            reads_intron=global_gene_data.intron_reads,
+            intron_coverage=global_gene_data.coverage,
             predicted_reads_exon=predicted_reads_exon,
             predicted_reads_intron=predicted_reads_intron,
-            pi=pi,
+            predicted_pi=predicted_pi,
         )
 
-    def closure() -> torch.Tensor:
-        optimizer.zero_grad()
-        loss = _compute_loss()
-        if not torch.isfinite(loss):
-            return torch.as_tensor(LOSS_CLAMP_VALUE, dtype=loss.dtype, device=loss.device)
-        loss.backward()
-        return loss
-
-    def evaluate_loss() -> torch.Tensor:
-        with torch.no_grad():
-            return _compute_loss()
-
-    return closure, evaluate_loss
+    return _make_closures(optimizer, _compute_loss)
 
 
 def _train_two_stage(
@@ -584,7 +590,7 @@ def _train_two_stage(
     return model, training_results
 
 
-def get_global_pol2_model_results(
+def get_global_rna_kinetics_model_results(
         global_gene_data: GlobalGeneData,
         dataset_metadata: DatasetMetadata,
         device: str = 'cpu',
@@ -604,8 +610,8 @@ def get_global_pol2_model_results(
     model, training_results = _train_two_stage(
         model,
         global_param_names={'lfc_elong_over_deg', 'lfc_splice_over_deg'},
-        make_closures=lambda opt: make_global_pol2_closures(model, opt, global_gene_data, dataset_metadata),
-        label='Global Pol2 | full model',
+        make_closures=lambda opt: _make_global_rna_kinetics_closures(model, opt, global_gene_data, dataset_metadata),
+        label='Global RNA kinetics | full model',
         verbose=verbose,
     )
 
@@ -638,7 +644,7 @@ def get_global_pol2_model_results(
                 reduced_state[key] = full_state[key]
 
             if reduced_matrix.shape[1] > 0:
-                full_lfc = model.beta if tested_parameter == TestableParameters.BETA else model.gamma
+                full_lfc = model.lfc_elong_over_deg if tested_parameter == TestableParameters.BETA else model.lfc_splice_over_deg
                 full_contribution = dataset_metadata.design_matrix @ full_lfc.detach()
                 reduced_state['reduced_lfc'] = torch.linalg.lstsq(reduced_matrix, full_contribution).solution
 
@@ -647,14 +653,16 @@ def get_global_pol2_model_results(
             model_reduced, results_reduced = _train_two_stage(
                 model_reduced,
                 global_param_names={'lfc_elong_over_deg', 'lfc_splice_over_deg', 'reduced_lfc'},
-                make_closures=lambda opt: make_global_pol2_closures(
+                make_closures=lambda opt: _make_global_rna_kinetics_closures(
                     model_reduced, opt, global_gene_data, dataset_metadata, reduced_matrix,
                 ),
-                label=f'Global Pol2 | LRT {lrt_row["test_id"]} | {tested_parameter}',
+                label=f'Global RNA kinetics | LRT {lrt_row["test_id"]} | {tested_parameter}',
                 verbose=verbose,
             )
 
-            full_lfc_vals = model.beta.detach() if tested_parameter == TestableParameters.BETA else model.gamma.detach()
+            full_lfc_vals = (model.lfc_elong_over_deg.detach()
+                             if tested_parameter == TestableParameters.BETA
+                             else model.lfc_splice_over_deg.detach())
             lfc_positive = (0.0 if pd.isna(lrt_row['lfc_column_positive'])
                             else full_lfc_vals[feature_names.index(lrt_row['lfc_column_positive'])].item())
             lfc_negative = (0.0 if pd.isna(lrt_row['lfc_column_negative'])
@@ -697,7 +705,7 @@ def get_global_splicing_model_results(
     model_full, results_full = _train_two_stage(
         model_full,
         global_param_names={'lfc_elong_over_splice'},
-        make_closures=lambda opt: make_splicing_closures(model_full, opt, coverage, dataset_metadata.design_matrix),
+        make_closures=lambda opt: _make_intron_coverage_closures(model_full, opt, coverage, dataset_metadata.design_matrix),
         label='Global splicing | full model',
         verbose=verbose,
     )
@@ -720,9 +728,9 @@ def get_global_splicing_model_results(
         ).to(device)
 
         with torch.no_grad():
-            model_reduced.intercept_pi_logit.data.copy_(model_full.theta.data)
+            model_reduced.intercept_pi_logit.data.copy_(model_full.intercept_pi_logit.data)
             if num_reduced_features > 0:
-                full_lfc_contribution = dataset_metadata.design_matrix @ model_full.lfc
+                full_lfc_contribution = dataset_metadata.design_matrix @ model_full.lfc_elong_over_splice
                 model_reduced.lfc_elong_over_splice.data.copy_(
                     torch.linalg.lstsq(reduced_matrix, full_lfc_contribution).solution
                 )
@@ -730,19 +738,19 @@ def get_global_splicing_model_results(
         model_reduced, results_reduced = _train_two_stage(
             model_reduced,
             global_param_names={'lfc_elong_over_splice'},
-            make_closures=lambda opt: make_splicing_closures(model_reduced, opt, coverage, reduced_matrix),
+            make_closures=lambda opt: _make_intron_coverage_closures(model_reduced, opt, coverage, reduced_matrix),
             label=f'Global splicing | LRT {lrt_row["test_id"]}',
             verbose=verbose,
         )
 
         lfc_positive = 0.0 if pd.isna(lrt_row['lfc_column_positive']) else \
-            model_param_df.loc[('lfc', lrt_row['lfc_column_positive'], None)]['value']
+            model_param_df.loc[(PARAMETER_WIRE_NAMES['lfc_elong_over_splice'], lrt_row['lfc_column_positive'], None)]['value']
         lfc_negative = 0.0 if pd.isna(lrt_row['lfc_column_negative']) else \
-            model_param_df.loc[('lfc', lrt_row['lfc_column_negative'], None)]['value']
+            model_param_df.loc[(PARAMETER_WIRE_NAMES['lfc_elong_over_splice'], lrt_row['lfc_column_negative'], None)]['value']
 
         chi2_stat = 2 * (results_reduced.final_loss - results_full.final_loss)
         test_result = lrt_row.to_dict()
-        test_result['tested_parameter'] = 'lfc'
+        test_result['tested_parameter'] = PARAMETER_WIRE_NAMES['lfc_elong_over_splice']
         test_result['intron_name'] = None
         test_result['lfc'] = lfc_positive - lfc_negative
         test_result['loss_full_model'] = results_full.final_loss
@@ -764,6 +772,7 @@ def get_regularized_splicing_model_results(
         hot_start_state_dict: StateDict,
         regularization_coefficients_df: pd.DataFrame,
         device: str = 'cpu',
+        lfc_is_intron_specific: bool = False,
 ) -> pd.DataFrame:
     coverage = input_data.coverage.to(device)
     dataset_metadata = dataset_metadata.to(device)
@@ -772,18 +781,19 @@ def get_regularized_splicing_model_results(
     model_regularized = IntronCoverageModel(
         feature_names=dataset_metadata.feature_names,
         intron_names=input_data.intron_names,
+        lfc_is_intron_specific=lfc_is_intron_specific,
     ).to(device)
     model_regularized.load_state_dict(hot_start_state_dict)
 
-    regularization_coefficients_lfc = torch.zeros((len(dataset_metadata.feature_names), 1)).to(device)
+    regularization_coefficients_elong_over_splice = torch.zeros((len(dataset_metadata.feature_names), 1)).to(device)
     for feature_index, feature_name in enumerate(dataset_metadata.feature_names):
-        regularization_coefficients_lfc[feature_index] = regularization_coefficients_df.loc[
-            ('lfc', feature_name)]['lambda']
+        regularization_coefficients_elong_over_splice[feature_index] = regularization_coefficients_df.loc[
+            (PARAMETER_WIRE_NAMES['lfc_elong_over_splice'], feature_name)]['lambda']
 
     optimizer_regularized = make_lbfgs_optimizer(model_regularized)
-    closure_regularized, evaluate_loss_regularized = make_splicing_closures(
+    closure_regularized, evaluate_loss_regularized = _make_intron_coverage_closures(
         model_regularized, optimizer_regularized, coverage, dataset_metadata.design_matrix,
-        regularization_coefficients_lfc=regularization_coefficients_lfc,
+        regularization_coefficients_elong_over_splice=regularization_coefficients_elong_over_splice,
     )
     model_regularized, training_results_regularized = train_model(
         model_regularized, optimizer_regularized, closure_regularized, evaluate_loss_regularized,

@@ -136,7 +136,7 @@ def build_param_df(model: nn.Module, parameter_axes: dict[str, tuple[Optional[st
 
 class CoverageLoss(nn.Module):
 
-    def __init__(self, num_position_coverage: int = 100):
+    def __init__(self, num_position_coverage: int):
         super().__init__()
         locations = torch.linspace(start=1 / (2 * num_position_coverage),
                                    end=1 - 1 / (2 * num_position_coverage),
@@ -308,13 +308,22 @@ class IntronCoverageModel(nn.Module):
 
     def __init__(self,
                  feature_names: list[str],
-                 intron_names: list[str]):
+                 intron_names: list[str],
+                 lfc_is_intron_specific: bool = False):
         super().__init__()
         self.feature_names = feature_names
         self.intron_names = intron_names
 
         num_features = len(feature_names)
         num_introns = len(intron_names)
+
+        # The model always has a single LFC, shared across whatever introns it was given.
+        # When it is fitted to one intron at a time, that LFC belongs to that intron and is
+        # reported under its name; when fitted per gene, it is shared and reported unnamed.
+        if lfc_is_intron_specific and num_introns != 1:
+            raise ValueError(
+                f"lfc_is_intron_specific requires exactly one intron, got {num_introns}: {intron_names}.")
+        self.lfc_is_intron_specific = lfc_is_intron_specific
 
         self.lfc_elong_over_splice = nn.Parameter(torch.zeros(num_features, 1))
         self.intercept_pi_logit = nn.Parameter(torch.zeros(num_introns))
@@ -333,7 +342,7 @@ class IntronCoverageModel(nn.Module):
 
     def get_param_df(self) -> pd.DataFrame:
         return build_param_df(self, {
-            'lfc_elong_over_splice': ('feature', None),
+            'lfc_elong_over_splice': ('feature', 'intron' if self.lfc_is_intron_specific else None),
             'intercept_pi_logit': ('intron',),
         })
 
@@ -457,7 +466,7 @@ class GlobalRNAKineticsModel(nn.Module):
 
 
 class RNAKineticsLoss(nn.Module):
-    def __init__(self, num_position_coverage: int = 100):
+    def __init__(self, num_position_coverage: int):
         super().__init__()
         self.loss_function_exon_counts = nn.PoissonNLLLoss(log_input=False, full=True, reduction='sum')
         self.loss_function_intron_counts = nn.PoissonNLLLoss(log_input=False, full=True, reduction='sum')
