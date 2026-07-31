@@ -3,12 +3,8 @@
 import argparse
 from pathlib import Path
 
-import pandas as pd
-from tqdm import tqdm
-
-from pol_ii_speed_modeling.load_dataset import load_dataset_metadata, load_gene_data_list
-from pol_ii_speed_modeling.pol_ii_model import concat_gene_data_list
-from pol_ii_speed_modeling.train import get_global_pol2_model_results
+from rna_kinetics.data import load_dataset_metadata, load_gene_data_list, concat_gene_data_list
+from rna_kinetics.estimation import get_global_rna_kinetics_model_results
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -46,7 +42,7 @@ if __name__ == "__main__":
 
     global_gene_data = concat_gene_data_list(gene_data_list)
 
-    model_param_df, test_results_df = get_global_pol2_model_results(
+    model_param_df, test_results_df = get_global_rna_kinetics_model_results(
         global_gene_data=global_gene_data,
         dataset_metadata=dataset_metadata,
         verbose=True,

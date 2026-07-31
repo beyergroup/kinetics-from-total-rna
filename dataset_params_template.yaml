@@ -27,12 +27,12 @@ custom_gene_list: null # Optional path to a CSV file with genes to fit the model
 
 design_formula: "~your+design+formula" # Design formula, specified as formulas in R.
 
-fit_pol_2_model: true
-fit_intron_specific_pol_2_model: false
-fit_global_pol2_model: false
-fit_global_splicing_model: true
-fit_gene_specific_splicing_model: false
-fit_intron_specific_splicing_model: false
+fit_rna_kinetics_model: true
+fit_intron_specific_rna_kinetics_model: false
+fit_global_rna_kinetics_model: false
+fit_global_intron_coverage_model: true
+fit_gene_specific_intron_coverage_model: false
+fit_intron_specific_intron_coverage_model: false
 
 lrt_contrasts: # List of contrasts for likelihood ratio tests.
   - variable: "your_categorical_variable_to_test" # For categorical variables, please specify groups (levels) that you want to compare

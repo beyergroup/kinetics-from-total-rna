@@ -6,8 +6,9 @@ library(tidyverse)
 parser <- ArgumentParser()
 parser$add_argument("--test_results", required = TRUE,
                     help = "Path to TSV with raw test results (output of merge_regularization.R).")
-parser$add_argument("--model_type", required = TRUE, choices = c("pol2", "splicing"),
-                    help = "Model type: pol2 or splicing.")
+parser$add_argument("--model_type", required = TRUE,
+                    choices = c("rna_kinetics", "intron_coverage"),
+                    help = "Model type: rna_kinetics or intron_coverage.")
 parser$add_argument("--output_folder", default = '.', help = "Path to output folder.")
 
 args <- parser$parse_args()
@@ -15,37 +16,31 @@ args <- parser$parse_args()
 output_folder <- args$output_folder
 if (!dir.exists(output_folder)) dir.create(output_folder, recursive = TRUE)
 
+# Names match the model parameter attributes in rna_kinetics/models.py. Each is a log fold
+# change of a ratio of two rates, which is why none of them is a rate change on its own.
 parameter_type_subtitles <- c(
-  gene_expression                  = "Gene expression",
-  lfc_elongation_minus_degradation = "LFC(elongation speed) − LFC(degradation rate)",
-  lfc_splicing_minus_degradation   = "LFC(splicing speed) − LFC(degradation rate)",
-  lfc_elongation_minus_splicing    = "LFC(elongation speed) − LFC(splicing speed)"
+  lfc_init_over_deg     = "LFC(initiation rate) − LFC(degradation rate)",
+  lfc_elong_over_deg    = "LFC(elongation speed) − LFC(degradation rate)",
+  lfc_splice_over_deg   = "LFC(splicing speed) − LFC(degradation rate)",
+  lfc_elong_over_splice = "LFC(elongation speed) − LFC(splicing speed)"
 )
 
 test_results <- read_tsv(args$test_results)
 
-if (args$model_type == "pol2") {
+if (args$model_type == "rna_kinetics") {
   test_results <- test_results |>
     mutate(
       parameter_type  = case_when(
-        tested_parameter == "alpha" ~ "gene_expression",
-        tested_parameter == "beta"  ~ "lfc_elongation_minus_degradation",
-        tested_parameter == "gamma" ~ "lfc_splicing_minus_degradation",
+        tested_parameter == "alpha" ~ "lfc_init_over_deg",
+        tested_parameter == "beta"  ~ "lfc_elong_over_deg",
+        tested_parameter == "gamma" ~ "lfc_splice_over_deg",
         TRUE                        ~ tested_parameter
       ),
-      # raw gamma = LFC(k_deg) - LFC(k_splice); flip → LFC(k_splice) - LFC(k_deg)
-      lfc             = if_else(parameter_type == "lfc_splicing_minus_degradation", -lfc, lfc),
-      lfc_regularized = if_else(parameter_type == "lfc_splicing_minus_degradation", -lfc_regularized, lfc_regularized),
     ) |>
     select(-tested_parameter)
 } else {
-  # splicing model: raw lfc = LFC(k_splice) - LFC(v); flip → LFC(v) - LFC(k_splice)
   test_results <- test_results |>
-    mutate(
-      parameter_type  = "lfc_elongation_minus_splicing",
-      lfc             = -lfc,
-      lfc_regularized = -lfc_regularized,
-    ) |>
+    mutate(parameter_type = "lfc_elong_over_splice") |>
     select(-tested_parameter)
 }
 

@@ -7,8 +7,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from pol_ii_speed_modeling.train import get_regularized_model_results, CacheForRegularization, StateDict
-from pol_ii_speed_modeling.pol_ii_model import GeneData, DatasetMetadata
+from rna_kinetics.estimation import get_regularized_rna_kinetics_model_results
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -41,14 +40,14 @@ if __name__ == "__main__":
                                           map_location=device)
     dataset_metadata = cache_for_regularization.dataset_metadata
     intron_specific_lfc = cache_for_regularization.intron_specific_lfc
-    regularized_model_params_list: list[pd.DataFrame] = [get_regularized_model_results(gene_data=gene_data,
-                                                                                       dataset_metadata=dataset_metadata,
-                                                                                       intron_specific_lfc=intron_specific_lfc,
-                                                                                       hot_start_state_dict=model_state_dict,
-                                                                                       regularization_coefficients_df=regularization_coefficients_df,
-                                                                                       device=device) for
-                                                         gene_data, model_state_dict in
-                                                         tqdm(cache_for_regularization.training_input_per_gene)]
+    regularized_model_params_list: list[pd.DataFrame] = [
+        get_regularized_rna_kinetics_model_results(gene_data=gene_data,
+                                                   dataset_metadata=dataset_metadata,
+                                                   intron_specific_lfc=intron_specific_lfc,
+                                                   hot_start_state_dict=model_state_dict,
+                                                   regularization_coefficients_df=regularization_coefficients_df,
+                                                   device=device)
+        for gene_data, model_state_dict in tqdm(cache_for_regularization.training_input_per_gene)]
     all_regularized_model_param_df = pd.concat(regularized_model_params_list).reset_index(drop=True)
 
     all_regularized_model_param_df.to_csv(output_folder / f"regularized_model_parameters{args.output_name_suffix}.tsv",

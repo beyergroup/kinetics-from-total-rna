@@ -7,7 +7,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from pol_ii_speed_modeling.train import get_regularized_splicing_model_results, CacheForRegularization
+from rna_kinetics.estimation import get_regularized_intron_coverage_model_results
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -41,15 +41,14 @@ if __name__ == "__main__":
 
     regularized_model_params_list = []
     for input_data, model_state_dict in tqdm(cache_for_regularization.training_input_per_gene):
-        model_param_df = get_regularized_splicing_model_results(
+        model_param_df = get_regularized_intron_coverage_model_results(
             input_data=input_data,
             dataset_metadata=dataset_metadata,
             hot_start_state_dict=model_state_dict,
             regularization_coefficients_df=regularization_coefficients_df,
             device=device,
+            lfc_is_intron_specific=cache_for_regularization.lfc_is_intron_specific,
         )
-        if cache_for_regularization.intron_specific_splicing:
-            model_param_df.loc[model_param_df['parameter_type'] == 'lfc', 'intron_name'] = input_data.intron_name
         regularized_model_params_list.append(model_param_df)
 
     pd.concat(regularized_model_params_list).reset_index(drop=True).to_csv(

@@ -7,8 +7,8 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from pol_ii_speed_modeling.load_dataset import load_dataset_metadata, load_intron_coverage_list
-from pol_ii_speed_modeling.train import get_splicing_model_results, CacheForRegularization, StateDict
+from rna_kinetics.data import load_dataset_metadata, load_intron_coverage_list
+from rna_kinetics.estimation import get_intron_coverage_model_results, CacheForRegularization
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -43,17 +43,14 @@ if __name__ == "__main__":
     training_inputs: list[tuple] = []
 
     for intron_data in tqdm(intron_data_list):
-        model_param_df, test_results_df, state_dict = get_splicing_model_results(
+        model_param_df, test_results_df, state_dict = get_intron_coverage_model_results(
             coverage=intron_data.coverage,
             dataset_metadata=dataset_metadata,
             intron_names=intron_data.intron_names,
+            lfc_is_intron_specific=True,
         )
         model_param_df = model_param_df.reset_index(drop=True)
-        # SplicingModel.get_param_df() always sets intron_name=None for lfc;
-        # fix it so merge_regularization.R can join on gene_name+intron_name+feature_name.
-        model_param_df.loc[model_param_df['parameter_type'] == 'lfc', 'intron_name'] = intron_data.intron_name
         model_param_df['gene_name'] = intron_data.gene_name
-        test_results_df['intron_name'] = intron_data.intron_name
         test_results_df['gene_name'] = intron_data.gene_name
 
         model_params_list.append(model_param_df)
@@ -70,7 +67,7 @@ if __name__ == "__main__":
     cache_for_regularization = CacheForRegularization(
         training_input_per_gene=training_inputs,
         dataset_metadata=dataset_metadata,
-        intron_specific_splicing=True,
+        lfc_is_intron_specific=True,
     )
     torch.save(cache_for_regularization,
                args.output_folder / f'cache_for_regularization{args.output_name_suffix}.pt')

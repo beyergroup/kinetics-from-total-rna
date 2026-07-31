@@ -119,7 +119,7 @@ process FitModel {
 
 }
 
-process FitGeneSplicingModel {
+process FitGeneIntronCoverageModel {
     input:
     tuple(
         path(modeled_genes_chunk),
@@ -143,7 +143,7 @@ process FitGeneSplicingModel {
     script:
     """
     export PYTHONPATH='${baseDir}'\${PYTHONPATH:+:\$PYTHONPATH}
-    fit_gene_specific_splicing_model.py \
+    fit_gene_specific_intron_coverage_model.py \
     --modeled_genes $modeled_genes_chunk \
     --modeled_introns $modeled_introns \
     --design_matrix $design_matrix \
@@ -159,7 +159,7 @@ process FitGeneSplicingModel {
     """
 }
 
-process FitIntronSplicingModel {
+process FitIntronCoverageModel {
     input:
     tuple(
         path(modeled_introns),
@@ -179,7 +179,7 @@ process FitIntronSplicingModel {
     script:
     """
     export PYTHONPATH='${baseDir}'\${PYTHONPATH:+:\$PYTHONPATH}
-    fit_intron_specific_splicing_model.py \
+    fit_intron_specific_intron_coverage_model.py \
     --modeled_introns $modeled_introns \
     --design_matrix $design_matrix \
     --library_size_factors $library_size_factors \
@@ -191,7 +191,7 @@ process FitIntronSplicingModel {
     """
 }
 
-process FitGlobalSplicingModel {
+process FitGlobalIntronCoverageModel {
     input:
     tuple(
         path(modeled_introns),
@@ -206,12 +206,12 @@ process FitGlobalSplicingModel {
     path("model_parameters.tsv"), emit: model_parameters
     path("test_results_raw.tsv"), emit: test_results
 
-    publishDir "${params.outdir}/${modeling_output_subfolder}/${model_run_id}/global_splicing_model", mode: 'copy'
+    publishDir "${params.outdir}/${modeling_output_subfolder}/${model_run_id}/global_intron_coverage_model", mode: 'copy'
 
     script:
     """
     export PYTHONPATH='${baseDir}'\${PYTHONPATH:+:\$PYTHONPATH}
-    fit_global_splicing_model.py \
+    fit_global_intron_coverage_model.py \
     --modeled_introns $modeled_introns \
     --design_matrix $design_matrix \
     --library_size_factors $library_size_factors \
@@ -222,7 +222,7 @@ process FitGlobalSplicingModel {
     """
 }
 
-process FitGlobalPol2Model {
+process FitGlobalRnaKineticsModel {
     input:
     tuple(
         path(modeled_genes),
@@ -241,12 +241,12 @@ process FitGlobalPol2Model {
     path("model_parameters.tsv"), emit: model_parameters
     path("test_results_raw.tsv"), emit: test_results
 
-    publishDir "${params.outdir}/${modeling_output_subfolder}/${model_run_id}/global_pol2_model", mode: 'copy'
+    publishDir "${params.outdir}/${modeling_output_subfolder}/${model_run_id}/global_rna_kinetics_model", mode: 'copy'
 
     script:
     """
     export PYTHONPATH='${baseDir}'\${PYTHONPATH:+:\$PYTHONPATH}
-    fit_global_pol2_model.py \
+    fit_global_rna_kinetics_model.py \
     --modeled_genes $modeled_genes \
     --modeled_introns $modeled_introns \
     --design_matrix $design_matrix \
@@ -327,7 +327,7 @@ process FitRegularizedModel {
     """
 }
 
-process FitRegularizedSplicingModel {
+process FitRegularizedIntronCoverageModel {
     input:
     tuple(
         path(cache_for_regularization),
@@ -341,7 +341,7 @@ process FitRegularizedSplicingModel {
     script:
     """
     export PYTHONPATH='${baseDir}'\${PYTHONPATH:+:\$PYTHONPATH}
-    fit_regularized_splicing_model.py \
+    fit_regularized_intron_coverage_model.py \
     --cache_for_regularization $cache_for_regularization \
     --regularization_coefficients $regularization_coefficients \
     --output_name_suffix _$chunk_name
@@ -411,7 +411,7 @@ process PostprocessGlobalResultsAndPlot {
     """
 }
 
-workflow pol2_model_subworkflow {
+workflow rna_kinetics_model_subworkflow {
     take:
         gene_names_chunks
         modeled_introns
@@ -425,7 +425,7 @@ workflow pol2_model_subworkflow {
         coverage_files
 
     main:
-        def model_subfolder = 'gene_specific_pol_2_model'
+        def model_subfolder = 'gene_specific_rna_kinetics_model'
 
         def model_input = gene_names_chunks
             .flatten()
@@ -463,11 +463,11 @@ workflow pol2_model_subworkflow {
             model_subfolder
         )
 
-        PostprocessResultsAndPlot(merge_regularization_output.raw_test_results, 'pol2', model_subfolder)
+        PostprocessResultsAndPlot(merge_regularization_output.raw_test_results, 'rna_kinetics', model_subfolder)
 }
 
 
-workflow intron_specific_pol2_model_subworkflow {
+workflow intron_specific_rna_kinetics_model_subworkflow {
     take:
         gene_names_chunks
         modeled_introns
@@ -481,7 +481,7 @@ workflow intron_specific_pol2_model_subworkflow {
         coverage_files
 
     main:
-        def model_subfolder = 'intron_specific_pol_2_model'
+        def model_subfolder = 'intron_specific_rna_kinetics_model'
 
         def model_input = gene_names_chunks
             .flatten()
@@ -519,11 +519,11 @@ workflow intron_specific_pol2_model_subworkflow {
             model_subfolder
         )
 
-        PostprocessResultsAndPlot(merge_regularization_output.raw_test_results, 'pol2', model_subfolder)
+        PostprocessResultsAndPlot(merge_regularization_output.raw_test_results, 'rna_kinetics', model_subfolder)
 }
 
 
-workflow gene_specific_splicing_model_subworkflow {
+workflow gene_specific_intron_coverage_model_subworkflow {
     take:
         gene_names_chunks
         modeled_introns
@@ -537,7 +537,7 @@ workflow gene_specific_splicing_model_subworkflow {
         coverage_files
 
     main:
-        def model_subfolder = 'gene_specific_splicing_model'
+        def model_subfolder = 'gene_specific_intron_coverage_model'
 
         def model_input = gene_names_chunks
             .flatten()
@@ -553,7 +553,7 @@ workflow gene_specific_splicing_model_subworkflow {
             // Wrapping coverage_files in an extra list prevents unwanted flattening behavior in .combine()
             .combine(coverage_files.map { file_list -> tuple([file_list]) })
 
-        def fit_model_output = FitGeneSplicingModel(model_input)
+        def fit_model_output = FitGeneIntronCoverageModel(model_input)
 
         def model_result_merged = MergeModelResultChunks(
             fit_model_output.model_parameters_chunk.collect(),
@@ -563,7 +563,7 @@ workflow gene_specific_splicing_model_subworkflow {
 
         def adaptive_shrinkage_out = AdaptiveShrinkage(model_result_merged.model_parameters, model_subfolder)
 
-        def fit_regularized_model_output = FitRegularizedSplicingModel(
+        def fit_regularized_model_output = FitRegularizedIntronCoverageModel(
             fit_model_output.cache_for_regularization
                 .combine(adaptive_shrinkage_out.regularization_coefficients)
         )
@@ -574,11 +574,11 @@ workflow gene_specific_splicing_model_subworkflow {
             model_subfolder
         )
 
-        PostprocessResultsAndPlot(merge_regularization_output.raw_test_results, 'splicing', model_subfolder)
+        PostprocessResultsAndPlot(merge_regularization_output.raw_test_results, 'intron_coverage', model_subfolder)
 }
 
 
-workflow intron_specific_splicing_model_subworkflow {
+workflow intron_specific_intron_coverage_model_subworkflow {
     take:
         intron_chunks
         design_matrix
@@ -588,7 +588,7 @@ workflow intron_specific_splicing_model_subworkflow {
         coverage_files
 
     main:
-        def model_subfolder = 'intron_specific_splicing_model'
+        def model_subfolder = 'intron_specific_intron_coverage_model'
 
         def model_input = intron_chunks
             .flatten()
@@ -600,7 +600,7 @@ workflow intron_specific_splicing_model_subworkflow {
             // Wrapping coverage_files in an extra list prevents unwanted flattening behavior in .combine()
             .combine(coverage_files.map { file_list -> tuple([file_list]) })
 
-        def fit_model_output = FitIntronSplicingModel(model_input)
+        def fit_model_output = FitIntronCoverageModel(model_input)
 
         def model_result_merged = MergeModelResultChunks(
             fit_model_output.model_parameters_chunk.collect(),
@@ -610,7 +610,7 @@ workflow intron_specific_splicing_model_subworkflow {
 
         def adaptive_shrinkage_out = AdaptiveShrinkage(model_result_merged.model_parameters, model_subfolder)
 
-        def fit_regularized_model_output = FitRegularizedSplicingModel(
+        def fit_regularized_model_output = FitRegularizedIntronCoverageModel(
             fit_model_output.cache_for_regularization
                 .combine(adaptive_shrinkage_out.regularization_coefficients)
         )
@@ -621,11 +621,11 @@ workflow intron_specific_splicing_model_subworkflow {
             model_subfolder
         )
 
-        PostprocessResultsAndPlot(merge_regularization_output.raw_test_results, 'splicing', model_subfolder)
+        PostprocessResultsAndPlot(merge_regularization_output.raw_test_results, 'intron_coverage', model_subfolder)
 }
 
 
-workflow global_splicing_model_subworkflow {
+workflow global_intron_coverage_model_subworkflow {
     take:
         modeled_introns
         design_matrix
@@ -635,9 +635,9 @@ workflow global_splicing_model_subworkflow {
         coverage_files
 
     main:
-        def model_subfolder = 'global_splicing_model'
+        def model_subfolder = 'global_intron_coverage_model'
 
-        def fit_output = FitGlobalSplicingModel(
+        def fit_output = FitGlobalIntronCoverageModel(
             modeled_introns
                 .combine(design_matrix)
                 .combine(lrt_metadata)
@@ -647,11 +647,11 @@ workflow global_splicing_model_subworkflow {
                 .combine(coverage_files.map { file_list -> tuple([file_list]) })
         )
 
-        PostprocessGlobalResultsAndPlot(fit_output.test_results, 'global_splicing', model_subfolder)
+        PostprocessGlobalResultsAndPlot(fit_output.test_results, 'global_intron_coverage', model_subfolder)
 }
 
 
-workflow global_pol2_model_subworkflow {
+workflow global_rna_kinetics_model_subworkflow {
     take:
         modeled_genes
         modeled_introns
@@ -665,9 +665,9 @@ workflow global_pol2_model_subworkflow {
         coverage_files
 
     main:
-        def model_subfolder = 'global_pol2_model'
+        def model_subfolder = 'global_rna_kinetics_model'
 
-        def fit_output = FitGlobalPol2Model(
+        def fit_output = FitGlobalRnaKineticsModel(
             modeled_genes
                 .combine(modeled_introns)
                 .combine(design_matrix)
@@ -681,7 +681,7 @@ workflow global_pol2_model_subworkflow {
                 .combine(coverage_files.map { file_list -> tuple([file_list]) })
         )
 
-        PostprocessGlobalResultsAndPlot(fit_output.test_results, 'global_pol2', model_subfolder)
+        PostprocessGlobalResultsAndPlot(fit_output.test_results, 'global_rna_kinetics', model_subfolder)
 }
 
 
@@ -721,12 +721,12 @@ workflow modeling_workflow {
         lrt_contrasts
         modelable_genes_input
         modelable_introns_input
-        fit_pol_2_model
-        fit_intron_specific_pol_2_model
-        fit_global_pol2_model
-        fit_global_splicing_model
-        fit_gene_specific_splicing_model
-        fit_intron_specific_splicing_model
+        fit_rna_kinetics_model
+        fit_intron_specific_rna_kinetics_model
+        fit_global_rna_kinetics_model
+        fit_global_intron_coverage_model
+        fit_gene_specific_intron_coverage_model
+        fit_intron_specific_intron_coverage_model
 
     main:
         def samplesheet = Channel.value(file(samplesheet_input))
@@ -753,8 +753,8 @@ workflow modeling_workflow {
                 .combine(modelable_introns_input)
         )
 
-        if (fit_pol_2_model) {
-            pol2_model_subworkflow(
+        if (fit_rna_kinetics_model) {
+            rna_kinetics_model_subworkflow(
                 modeled_genes.gene_names_chunks,
                 modeled_genes.modeled_introns,
                 design_matrices_data.design_matrix,
@@ -768,8 +768,8 @@ workflow modeling_workflow {
             )
         }
 
-        if (fit_intron_specific_pol_2_model) {
-            intron_specific_pol2_model_subworkflow(
+        if (fit_intron_specific_rna_kinetics_model) {
+            intron_specific_rna_kinetics_model_subworkflow(
                 modeled_genes.gene_names_chunks,
                 modeled_genes.modeled_introns,
                 design_matrices_data.design_matrix,
@@ -783,8 +783,8 @@ workflow modeling_workflow {
             )
         }
 
-        if (fit_global_pol2_model) {
-            global_pol2_model_subworkflow(
+        if (fit_global_rna_kinetics_model) {
+            global_rna_kinetics_model_subworkflow(
                 modeled_genes.modeled_genes,
                 modeled_genes.modeled_introns,
                 design_matrices_data.design_matrix,
@@ -798,8 +798,8 @@ workflow modeling_workflow {
             )
         }
 
-        if (fit_gene_specific_splicing_model) {
-            gene_specific_splicing_model_subworkflow(
+        if (fit_gene_specific_intron_coverage_model) {
+            gene_specific_intron_coverage_model_subworkflow(
                 modeled_genes.gene_names_chunks,
                 modeled_genes.modeled_introns,
                 design_matrices_data.design_matrix,
@@ -813,8 +813,8 @@ workflow modeling_workflow {
             )
         }
 
-        if (fit_intron_specific_splicing_model) {
-            intron_specific_splicing_model_subworkflow(
+        if (fit_intron_specific_intron_coverage_model) {
+            intron_specific_intron_coverage_model_subworkflow(
                 modeled_genes.intron_chunks,
                 design_matrices_data.design_matrix,
                 design_matrices_data.lrt_metadata,
@@ -824,8 +824,8 @@ workflow modeling_workflow {
             )
         }
 
-        if (fit_global_splicing_model) {
-            global_splicing_model_subworkflow(
+        if (fit_global_intron_coverage_model) {
+            global_intron_coverage_model_subworkflow(
                 modeled_genes.modeled_introns,
                 design_matrices_data.design_matrix,
                 design_matrices_data.lrt_metadata,

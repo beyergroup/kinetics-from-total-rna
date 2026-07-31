@@ -9,14 +9,14 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from pol_ii_speed_modeling.load_dataset import load_dataset_metadata
-from pol_ii_speed_modeling.train import get_global_splicing_model_results
+from rna_kinetics.data import load_dataset_metadata
+from rna_kinetics.estimation import get_global_intron_coverage_model_results
 
 # --- Dev block: comment out when running via Nextflow ---
 # results_folder = Path('/home/jakub/Desktop/c_elegans_test/results/')
 # model_run_timestamp = 'model_run_26_Apr_2026_11_47_29'
 # sys.argv = [
-#     'fit_global_splicing_model.py',
+#     'fit_global_intron_coverage_model.py',
 #     '--modeled_introns', str(results_folder / f'modeling/{model_run_timestamp}/modeled_genes/modeled_introns.tsv'),
 #     '--design_matrix', str(results_folder / f'modeling/{model_run_timestamp}/design_matrices/design_matrix.tsv'),
 #     '--library_size_factors', str(results_folder / 'preprocessing/aggregated_counts/library_size_factors.tsv'),
@@ -83,7 +83,7 @@ if __name__ == "__main__":
         dtype=torch.float32,
     )
 
-    model_param_df, test_results_df = get_global_splicing_model_results(
+    model_param_df, test_results_df = get_global_intron_coverage_model_results(
         coverage=coverage,
         dataset_metadata=dataset_metadata,
         intron_names=intron_names,

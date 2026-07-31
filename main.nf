@@ -99,12 +99,12 @@ workflow {
             lrt_contrasts,
             modelable_genes,
             modelable_introns,
-            params.fit_pol_2_model,
-            params.fit_intron_specific_pol_2_model,
-            params.fit_global_pol2_model,
-            params.fit_global_splicing_model,
-            params.fit_gene_specific_splicing_model,
-            params.fit_intron_specific_splicing_model
+            params.fit_rna_kinetics_model,
+            params.fit_intron_specific_rna_kinetics_model,
+            params.fit_global_rna_kinetics_model,
+            params.fit_global_intron_coverage_model,
+            params.fit_gene_specific_intron_coverage_model,
+            params.fit_intron_specific_intron_coverage_model
         )
     }
 }

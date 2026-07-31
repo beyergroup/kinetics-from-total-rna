@@ -7,8 +7,8 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from pol_ii_speed_modeling.load_dataset import load_dataset_metadata, load_gene_data_list
-from pol_ii_speed_modeling.train import get_splicing_model_results, CacheForRegularization, StateDict
+from rna_kinetics.data import load_dataset_metadata, load_gene_data_list
+from rna_kinetics.estimation import get_intron_coverage_model_results, CacheForRegularization, StateDict
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -86,7 +86,7 @@ if __name__ == "__main__":
     state_dicts_list: list[StateDict] = []
 
     for gene_data in tqdm(gene_data_list):
-        model_param_df, test_results_df, state_dict = get_splicing_model_results(
+        model_param_df, test_results_df, state_dict = get_intron_coverage_model_results(
             coverage=gene_data.coverage,
             dataset_metadata=dataset_metadata,
             intron_names=gene_data.intron_names,

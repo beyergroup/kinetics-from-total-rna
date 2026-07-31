@@ -7,8 +7,8 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from pol_ii_speed_modeling.load_dataset import load_dataset_metadata, load_gene_data_list
-from pol_ii_speed_modeling.train import get_model_results, CacheForRegularization, StateDict
+from rna_kinetics.data import load_dataset_metadata, load_gene_data_list
+from rna_kinetics.estimation import get_rna_kinetics_model_results, CacheForRegularization, StateDict
 
 
 def parse_bool_in_argparse(argument: str) -> bool:
@@ -91,13 +91,11 @@ if __name__ == "__main__":
                                          coverage_folder=args.coverage_data_folder,
                                          sample_names=dataset_metadata.sample_names)
 
-    result_list = [get_model_results(gene_data=gene_data,
-                                     dataset_metadata=dataset_metadata,
-                                     intron_specific_lfc=args.intron_specific_lfc)
+    result_list = [get_rna_kinetics_model_results(gene_data=gene_data,
+                                                  dataset_metadata=dataset_metadata,
+                                                  intron_specific_lfc=args.intron_specific_lfc)
                    for gene_data in tqdm(gene_data_list)]
 
-    model_params_list: list[pd.DataFrame] = [result[0] for result in result_list]
-    test_results_list: list[pd.DataFrame] = [result[1] for result in result_list]
     state_dicts_list: list[StateDict] = [result[2] for result in result_list]
 
     all_model_param_df = pd.concat([result[0] for result in result_list]).reset_index(drop=True)
