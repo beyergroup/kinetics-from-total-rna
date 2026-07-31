@@ -191,13 +191,22 @@ def _make_intron_coverage_closures(
     return _make_closures(optimizer, _compute_loss)
 
 
-def flatten_hessian_dict(hessian_dict, model_parameters):
+def flatten_hessian_dict(hessian_dict: dict[str, dict[str, torch.Tensor]],
+                         model_parameters: dict[str, torch.Tensor]) -> torch.Tensor:
+    """
+    Flatten the per-parameter-pair Hessian blocks into a single matrix.
+
+    Row/column order is load-bearing: `add_wald_test_results` maps rows of this matrix onto rows
+    of the parameter dataframe by position, so parameters are concatenated in `named_parameters()`
+    order and each block is flattened in C order, matching `build_param_df` in models.py.
+    """
     param_names = list(model_parameters.keys())
     param_sizes = {name: model_parameters[name].numel() for name in param_names}
     param_offsets = {name: sum(param_sizes[n] for n in param_names[:i])
                      for i, name in enumerate(param_names)}
     total_param_size = sum(param_sizes.values())
-    hessian_matrix = torch.zeros((total_param_size, total_param_size))
+    device = next(iter(model_parameters.values())).device
+    hessian_matrix = torch.zeros((total_param_size, total_param_size), device=device)
 
     for param_1 in param_names:
         for param_2 in param_names:
@@ -264,11 +273,11 @@ def add_wald_test_results(df_param: pd.DataFrame, hessian_matrix: torch.Tensor) 
     return df_param
 
 
-def get_model_results(gene_data: GeneData,
-                      dataset_metadata: DatasetMetadata,
-                      intron_specific_lfc: bool,
-                      device='cpu'
-                      ) -> tuple[pd.DataFrame, pd.DataFrame, StateDict]:
+def get_rna_kinetics_model_results(gene_data: GeneData,
+                                   dataset_metadata: DatasetMetadata,
+                                   intron_specific_lfc: bool,
+                                   device='cpu'
+                                   ) -> tuple[pd.DataFrame, pd.DataFrame, StateDict]:
     gene_data = gene_data.to(device)
     dataset_metadata = dataset_metadata.to(device)
 
@@ -384,13 +393,13 @@ def get_model_results(gene_data: GeneData,
     return model_param_df, test_results_df, model_full.state_dict()
 
 
-def get_regularized_model_results(gene_data: GeneData,
-                                  dataset_metadata: DatasetMetadata,
-                                  intron_specific_lfc: bool,
-                                  hot_start_state_dict: StateDict,
-                                  regularization_coefficients_df: pd.DataFrame,
-                                  device='cpu'
-                                  ) -> pd.DataFrame:
+def get_regularized_rna_kinetics_model_results(gene_data: GeneData,
+                                               dataset_metadata: DatasetMetadata,
+                                               intron_specific_lfc: bool,
+                                               hot_start_state_dict: StateDict,
+                                               regularization_coefficients_df: pd.DataFrame,
+                                               device='cpu'
+                                               ) -> pd.DataFrame:
     gene_data = gene_data.to(device)
     dataset_metadata = dataset_metadata.to(device)
     regularization_coefficients_df = regularization_coefficients_df.set_index(['parameter_type', 'feature_name'])
@@ -427,7 +436,7 @@ def get_regularized_model_results(gene_data: GeneData,
     return model_param_df
 
 
-def get_splicing_model_results(
+def get_intron_coverage_model_results(
         coverage: torch.Tensor,
         dataset_metadata: DatasetMetadata,
         intron_names: list[str],
@@ -435,7 +444,7 @@ def get_splicing_model_results(
         verbose: bool = False,
         compute_wald_test: bool = True,
         lfc_is_intron_specific: bool = False,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, StateDict]:
     coverage = coverage.to(device)
     dataset_metadata = dataset_metadata.to(device)
 
@@ -463,12 +472,12 @@ def get_splicing_model_results(
 
     coverage_loss_fn = CoverageLoss(num_position_coverage=coverage.shape[2]).to(device)
 
-    def splicing_loss_by_params(params):
+    def intron_coverage_loss_by_params(params):
         pi = functional_call(model_full, params, (dataset_metadata.design_matrix,))
         return coverage_loss_fn(pi, coverage)
 
     if compute_wald_test:
-        fisher_information_matrix = get_fisher_information_matrix(model_full, splicing_loss_by_params)
+        fisher_information_matrix = get_fisher_information_matrix(model_full, intron_coverage_loss_by_params)
         model_param_df = add_wald_test_results(model_param_df, fisher_information_matrix)
     model_param_df = model_param_df.set_index(['parameter_type', 'feature_name', 'intron_name'], drop=False)
 
@@ -566,7 +575,8 @@ def _train_two_stage(
     prefix = f'[{label}] ' if label else ''
 
     # Stage 1: freeze per-gene/per-intron params; optimize only shared params
-    print(f'{prefix}Stage 1: optimizing shared params ({", ".join(sorted(global_param_names))})', flush=True)
+    if verbose:
+        print(f'{prefix}Stage 1: optimizing shared params ({", ".join(sorted(global_param_names))})', flush=True)
     for name, param in model.named_parameters():
         param.requires_grad_(name in global_param_names)
     stage_1_params = [p for p in model.parameters() if p.requires_grad and p.numel() > 0]
@@ -580,7 +590,8 @@ def _train_two_stage(
         model, _ = train_model(model, optimizer_stage_1, closure_stage_1, eval_stage_1, max_epochs=500, verbose=verbose)
 
     # Stage 2: unfreeze all, refine jointly from warm start
-    print(f'{prefix}Stage 2: joint optimization (all params)', flush=True)
+    if verbose:
+        print(f'{prefix}Stage 2: joint optimization (all params)', flush=True)
     for param in model.parameters():
         param.requires_grad_(True)
     optimizer_stage_2 = make_lbfgs_optimizer(model)
@@ -686,7 +697,7 @@ def get_global_rna_kinetics_model_results(
     return model_param_df, pd.DataFrame(test_results_list)
 
 
-def get_global_splicing_model_results(
+def get_global_intron_coverage_model_results(
         coverage: torch.Tensor,
         dataset_metadata: DatasetMetadata,
         intron_names: list[str],
@@ -706,7 +717,7 @@ def get_global_splicing_model_results(
         model_full,
         global_param_names={'lfc_elong_over_splice'},
         make_closures=lambda opt: _make_intron_coverage_closures(model_full, opt, coverage, dataset_metadata.design_matrix),
-        label='Global splicing | full model',
+        label='Global intron coverage | full model',
         verbose=verbose,
     )
 
@@ -739,7 +750,7 @@ def get_global_splicing_model_results(
             model_reduced,
             global_param_names={'lfc_elong_over_splice'},
             make_closures=lambda opt: _make_intron_coverage_closures(model_reduced, opt, coverage, reduced_matrix),
-            label=f'Global splicing | LRT {lrt_row["test_id"]}',
+            label=f'Global intron coverage | LRT {lrt_row["test_id"]}',
             verbose=verbose,
         )
 
@@ -766,7 +777,7 @@ def get_global_splicing_model_results(
     return model_param_df.reset_index(drop=True), pd.DataFrame(test_results_list)
 
 
-def get_regularized_splicing_model_results(
+def get_regularized_intron_coverage_model_results(
         input_data: GeneData | IntronData,
         dataset_metadata: DatasetMetadata,
         hot_start_state_dict: StateDict,
