@@ -2,10 +2,12 @@
 
 This repository contains a pipeline that uses total RNA-seq to estimate changes in the kinetic
 parameters of transcription and RNA processing: the transcription initiation rate, the elongation
-speed, the intron splicing speed, and the RNA degradation rate. Because total RNA-seq observes RNA
-at steady state, these parameters are identifiable only relative to one another, so every effect
-size the pipeline reports is a fold change of a *ratio* of two of them; see
-[What the model estimates](#what-the-model-estimates) below.
+speed, the intron splicing speed, and the RNA degradation rate. Similarly to a differential
+expression analysis, the pipeline compares samples from different conditions (for example treated
+versus control), and estimates how these parameters change between them. Because total RNA-seq
+observes RNA at steady state, these parameters can be identified only relative to each other, and
+every effect size reported by the pipeline is therefore a fold change of a ratio of two of them (see
+the section [What the model estimates](#what-the-model-estimates) below).
 
 The code is organized as a Nextflow pipeline. To run it, you will need FASTQ
 data of total RNA-seq; please read the documentation below for more details.
@@ -14,30 +16,31 @@ The model itself is implemented using PyTorch; the code can be found in
 the [rna_kinetics](rna_kinetics) folder
 (which can also be installed as a pip package).
 
-> **Note on the preprint.** A preprint is
+> **Note on the preprint.** Our preprint is
 > [available on bioRxiv](https://doi.org/10.1101/2025.08.24.672013), but it describes an earlier
-> version of this method. The code in this repository has since changed substantially — including
-> the quantities that are reported and how they are named — and no longer corresponds to what that
-> preprint describes. An updated manuscript is in preparation; until then, please treat this README
-> as the authoritative description of what the code does.
+> version of the method. The code in this repository has changed substantially since then
+> (including which quantities are reported, and how they are named), and it no longer corresponds
+> to the description in the preprint. We are currently preparing an updated manuscript; until it is
+> finished, please use this README as the description of what the code actually does.
 >
-> The current draft is included in this repository as [preprint/preprint.tex](preprint/preprint.tex)
-> (with a rendered [PDF](preprint/preprint.pdf)). It is **unfinished** — the results and discussion
-> are placeholders — but *Section 2, Dynamical Model of RNA Metabolism*, is essentially complete.
-> That section derives the underlying physical model of RNA metabolism, its steady-state solution,
-> and the structural non-identifiability described below, and is the best starting point if you
-> want to understand what the pipeline is actually fitting.
+> The current draft of the manuscript is included in this repository as
+> [preprint_draft_2026-07-31.pdf](preprint_draft_2026-07-31.pdf). Please note that the draft is not
+> finished, and its results and discussion sections are only placeholders. However, the section
+> *Dynamical Model of RNA Metabolism* is mostly complete; it describes the underlying physical model
+> of the RNA metabolism, its steady state solution, and the structural non-identifiability discussed
+> below. We therefore recommend reading this section if you want to understand what the pipeline is
+> fitting.
 
 ## What the model estimates
 
-**Every reported effect size is a log fold change (LFC) of a *ratio* of two rates, never of a single
-rate.** This is a structural property of the data, not a shortcoming of the fit: total RNA-seq
-measures RNA at steady state, and steady-state abundances constrain the underlying kinetic rates
-only relative to one another. Scaling all rates by a common factor leaves the predictions
-unchanged, so no individual rate is identifiable.
+Every effect size reported by the pipeline is a log fold change (LFC) of a ratio of two rates, and
+never of a single rate. This is a consequence of the data we are using: total RNA-seq observes RNA
+at steady state, and the steady-state abundances constrain the kinetic rates only relative to each
+other. If we scale all rates by a common factor, the predicted abundances stay the same, and
+therefore no individual rate can be identified.
 
-Concretely, the pipeline reports the following parameters (using the same names that appear in the
-`parameter_type` column of the output):
+The pipeline reports the following parameters, using the same names as in the `parameter_type`
+column of the output:
 
 | Parameter | Interpretation |
 | --- | --- |
@@ -46,73 +49,86 @@ Concretely, the pipeline reports the following parameters (using the same names 
 | `lfc_splice_over_deg` | LFC(splicing speed) − LFC(degradation rate) |
 | `lfc_elong_over_splice` | LFC(elongation speed) − LFC(splicing speed) |
 
-The practical consequence is that a significant result identifies which *pair* of rates has moved
-relative to the other, and never by itself which member of the pair is responsible. A positive
-`lfc_elong_over_deg`, for instance, is equally consistent with faster elongation and with slower
-degradation. Interpreting the parameters jointly helps: if `lfc_elong_over_deg` and
-`lfc_splice_over_deg` shift together by a similar amount while `lfc_elong_over_splice` stays near
-zero, a change in degradation is the more parsimonious explanation than a coincident change in both
-elongation and splicing.
+Therefore, a significant result tells us which pair of rates has changed relative to each other, but
+not which member of the pair is responsible for the change. For example, a positive
+`lfc_elong_over_deg` is equally consistent with a faster elongation and with a slower degradation.
+It may help to interpret the parameters jointly: if `lfc_elong_over_deg` and `lfc_splice_over_deg`
+shift by a similar amount, while `lfc_elong_over_splice` stays near zero, then a change of the
+degradation rate is a more parsimonious explanation than a simultaneous change of both the
+elongation and the splicing speed.
 
-Of the four, only `lfc_init_over_deg` maps onto a familiar quantity: it is the log fold change in
-steady-state abundance, i.e. what a conventional differential-expression analysis reports. Further
-ratios can be formed by subtracting the parameters from each other — for example
-`lfc_init_over_deg` − `lfc_elong_over_deg` = LFC(initiation / elongation speed), a change in
-polymerase density along the gene body — but only the four parameters in the table are covered by
-the likelihood-ratio tests.
+Some of these ratios also correspond to quantities that are used elsewhere. For example,
+`lfc_init_over_deg` is the LFC of the steady-state abundance, which is what a conventional
+differential expression analysis reports. Further ratios can be obtained by subtracting the
+parameters from each other: `lfc_init_over_deg` − `lfc_elong_over_deg` = LFC(initiation rate) −
+LFC(elongation speed) describes a change of the polymerase density along the gene body. However,
+only the four parameters listed in the table are currently covered by the likelihood-ratio tests.
 
-Note also that `lfc_init_over_deg` is always estimated **per gene**, in every model. A global
-version of it would not be identifiable: RNA-seq is compositional data, capturing only relative
-abundances, so an expression shift shared by *all* genes is indistinguishable from a change in
-sequencing depth and is absorbed by the library size factors. The other two parameters do not have
-this problem, because they are identified by the intron-to-exon read ratio *within* each gene,
-which is unaffected by library size. Accordingly, the global RNA kinetics model tests only
-`lfc_elong_over_deg` and `lfc_splice_over_deg`.
+Note that `lfc_init_over_deg` is always estimated per gene, in all of our models. Some of the models
+estimate a single effect for the whole dataset instead of a per-gene one (these variants are
+described in the section [Model variants](#model-variants) below), but such a dataset-wide version
+of `lfc_init_over_deg` would not be identifiable, since RNA-seq is compositional data that captures
+only relative abundances; an expression shift shared by all genes is therefore indistinguishable
+from a change of the sequencing depth, and is absorbed by the library size factors. The same holds for any dataset-wide ratio that involves the initiation rate (for example
+`lfc_init_over_elong` would not work either), because the initiation rate enters the data only
+through the overall transcript abundance. The remaining ratios are not affected by this, since they
+are obtained from comparisons within a single gene (intron versus exon read counts, and the coverage
+profile along an intron), in which the library size cancels out; these within-gene signals are then
+pooled across genes to obtain a dataset-wide estimate. For this reason, the global RNA kinetics
+model tests only `lfc_elong_over_deg` and `lfc_splice_over_deg`.
 
-Effect sizes are always reported as log2 fold changes. Significance comes from likelihood-ratio
-tests against a reduced design (see *LRT contrasts* below).
+The effect sizes are always reported as log2 fold changes. Their significance is assessed by
+likelihood-ratio tests, with the null hypothesis that the corresponding LFC is equal to zero (see
+*LRT contrasts* below).
 
-## Choosing a model
+## Model variants
 
-The pipeline provides six models. They differ along two axes, and you can enable any combination of
-them in `dataset_params.yaml`; each writes to its own output subfolder.
+The pipeline provides six models, which differ in two aspects. You can enable any combination of them
+in the ```dataset_params.yaml``` file, and each of them writes its results into a separate output
+subfolder.
 
-**Axis 1 — which data are used.**
+The first aspect is which data are used by the model:
 
-* **RNA kinetics models** fit exon read counts, intron read counts, and intron coverage jointly.
-  Using the read counts as well lets them resolve all three degradation-referenced parameters
-  (`lfc_init_over_deg`, `lfc_elong_over_deg`, `lfc_splice_over_deg`).
-* **Intron coverage models** fit the intron coverage alone, and report a single parameter,
-  `lfc_elong_over_splice`. This is the simpler and more robust model, at the cost of not separating
-  elongation and splicing from degradation.
+* **RNA kinetics models** are fitted to the exon read counts, intron read counts and intron coverage
+  jointly. Since they also use the read counts, they can resolve all three parameters that are
+  referenced to the degradation rate (`lfc_init_over_deg`, `lfc_elong_over_deg` and
+  `lfc_splice_over_deg`).
+* **Intron coverage models** are fitted to the intron coverage only, and report a single parameter,
+  `lfc_elong_over_splice`. The coverage along an intron is informative about the ratio of the
+  elongation and splicing speeds, and does not depend on the degradation rate at all. These models
+  are therefore simpler, but they do not estimate the three parameters that are referenced to the
+  degradation rate.
 
-**Axis 2 — granularity**, i.e. how many introns share one estimated effect. Coarser granularity
-pools more data and therefore has more statistical power, but assumes the effect is genuinely
-shared.
+The second aspect is the granularity, i.e. how many introns share one estimated effect. A coarser
+granularity pools more data, and therefore has a higher statistical power; on the other hand, it
+assumes that the effect is indeed shared.
 
-| Granularity | RNA kinetics | Intron coverage |
+The six resulting models are listed below. Each cell of the table gives the parameter of the
+```dataset_params.yaml``` file that enables the corresponding model:
+
+| Granularity | RNA kinetics model | Intron coverage model |
 | --- | --- | --- |
-| **Global** — one effect for the whole dataset | `fit_global_rna_kinetics_model` | `fit_global_intron_coverage_model` |
-| **Per gene** — one effect per gene, shared by its introns | `fit_rna_kinetics_model` | `fit_gene_specific_intron_coverage_model` |
-| **Per intron** — a separate effect for every intron | `fit_intron_specific_rna_kinetics_model` | `fit_intron_specific_intron_coverage_model` |
+| **Global**, one effect for the whole dataset | *fit_global_rna_kinetics_model* | *fit_global_intron_coverage_model* |
+| **Per gene**, one effect per gene, shared by its introns | *fit_rna_kinetics_model* | *fit_gene_specific_intron_coverage_model* |
+| **Per intron**, a separate effect for every intron | *fit_intron_specific_rna_kinetics_model* | *fit_intron_specific_intron_coverage_model* |
 
-A good starting point is to run the global and per-gene models of both families, which is what
-`dataset_params_template.yaml` enables by default. The global fits tell you whether there is a
-dataset-wide shift and stay well powered even in small experiments, while the per-gene fits
-identify which genes drive it.
+We recommend starting with the global and per-gene models of both families, which is also the
+default setting in the [dataset_params_template.yaml](dataset_params_template.yaml) file. The global
+models tell you whether there is a dataset-wide shift, and they are well powered even for small
+experiments, while the per-gene models identify which genes are driving it.
 
-The two per-intron models are off by default. They are the most granular but the least powered,
-since each estimate draws on a single intron; the per-intron RNA kinetics model is additionally the
-most expensive to compute. They are worth enabling when you specifically expect introns within a
-gene to behave differently — otherwise the per-gene models answer the same question with more data
-behind each estimate. As with every flag here, you can enable any combination you like.
+The two per-intron models are disabled by default. They are the most granular, but also the least
+powered, since each estimate is based on a single intron; moreover, the per-intron RNA kinetics
+model is the most expensive one to compute. These models can be useful if you expect the introns
+within a gene to behave differently, otherwise the per-gene models answer the same question with
+more data behind each estimate.
 
-Granularity also changes what the output contains. Per-gene and per-intron models run an additional
-regularization step, shrinking effect sizes towards zero with an empirical Bayes prior fitted by
-[ashr](https://github.com/stephens999/ashr) across all genes; their `test_results.tsv` therefore
-carries both `l2fc_unregularized` and `l2fc_regularized`. A global model estimates a single effect,
-so there is nothing to pool a prior across and no shrinkage is applied — its output has one
-estimate, `l2fc_mle`.
+The granularity also affects the content of the output. The per-gene and per-intron models perform
+an additional regularization step, in which the effect sizes are shrunk towards zero using an
+empirical Bayes prior fitted by [ashr](https://github.com/stephens999/ashr) across all genes; their
+```test_results.tsv``` file therefore contains both `l2fc_unregularized` and `l2fc_regularized`. The
+global models estimate a single effect, so there is nothing to fit the prior on, and no shrinkage is
+applied; their output contains a single estimate, `l2fc_mle`.
 
 ## Running the pipeline
 
@@ -217,27 +233,53 @@ Then, the pipeline can be run by
 nextflow run main.nf -params-file dataset_params.yaml
 ```
 
-See the Nextflow documentation for [details](https://www.nextflow.io/docs/latest/executor.html) on how to run the
-pipeline on your HPC/cloud system.
+Please note that the pipeline is computationally demanding. The read alignment is the most costly
+part in terms of memory: by default, we request 200 GB of memory for building the STAR and Salmon
+indices, and 120 GB for the alignment itself.
+
+The model fitting is demanding as well, although in a different way: it does not need much memory,
+but it takes a considerable amount of CPU time, since every gene is fitted separately, and each
+likelihood-ratio test requires fitting an additional model. The genes are split into chunks that are
+processed in parallel, so this part of the pipeline also benefits from having many cores available.
+
+We therefore recommend running the pipeline on an HPC system. See the Nextflow documentation for
+[details](https://www.nextflow.io/docs/latest/executor.html) on how to run the pipeline on your
+HPC/cloud system.
+
+For testing purposes, we also provide the *local* profile, which caps the memory requests at 56 GB,
+so that the pipeline can be run on a machine with 64 GB of RAM:
+
+```commandline
+nextflow run main.nf -params-file dataset_params.yaml -profile local
+```
+
+We have tested this profile on a small dataset (C. elegans), but we cannot guarantee that it will be
+sufficient for your data. In particular, we have not tested whether the indices of larger genomes
+(e.g. human or mouse) can be built within these limits. If the index building runs out of memory,
+you can build the STAR and Salmon indices beforehand, and provide the paths to them in the
+*star_index* and *salmon_index* parameters. Please note that even then, the alignment itself may
+require more memory than the profile allows, depending on the genome and on the size of your FASTQ
+files; in that case, we are not aware of any workaround other than using a machine with more memory.
 
 **Note on Slurm**: On our HPC system using Slurm, we noticed the following bug: when several of the
-model-fitting processes — that is, any of the processes that run PyTorch — are executed on the same
+model-fitting processes (that is, any of the processes that run PyTorch) are executed on the same
 cluster node, their CPU usages somehow collide, resulting in orders of magnitude slower process
 execution. We suspect that this may be related to the underlying BLAS settings and/or our cluster
 setup, and we are currently trying to resolve this issue. In the case that you experience similar
 behavior, please execute at most one model-fitting process per cluster node.
 
-The `beyer_cluster` profile in [nextflow.config](nextflow.config) contains the crude workaround we
-currently use for this: each fitting process requests substantially more memory than it actually
-needs (130 GB, somewhat over half of a node), so that Slurm cannot place two of them on the same
-node. This is deliberately a hack — the requested memory goes unused, and it relies on a side
-effect of the scheduler rather than expressing what we actually want.
+The crude workaround that we are currently using can be found in the *beyer_cluster* profile in the
+[nextflow.config](nextflow.config) file: each of the fitting processes requests substantially more
+memory than it actually needs (130 GB, which is somewhat over one half of a node), so that Slurm
+cannot place two of them on the same node. Please note that this is only a hack, since the requested
+memory is not used, and we are relying on a side effect of the scheduler instead of specifying what
+we actually want.
 
-We kept it because the alternatives we tried were worse. Setting explicit thread limits
-(`OMP_NUM_THREADS`, `torch.set_num_threads` and similar) did not resolve the collision in our tests,
-and most variants made performance worse rather than better. Requesting nodes exclusively
-(`--exclusive`) does prevent the problem, but reserves the entire node, whereas over-requesting
-memory still leaves the remaining cores available to other jobs.
+We are using this hack, as the alternatives that we tried were even worse. Setting explicit thread limits
+(```OMP_NUM_THREADS```, ```torch.set_num_threads``` and similar) did not resolve the collision in our
+tests, and most of the variants made the performance even worse. Requesting the nodes exclusively
+(```--exclusive```) does prevent the problem, but it reserves the whole node, while over-requesting
+the memory still leaves the remaining cores available for other jobs.
 
 ## Contact
 
