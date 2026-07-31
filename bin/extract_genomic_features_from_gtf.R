@@ -24,6 +24,14 @@ parser$add_argument("--min_intron_length",
 parser$add_argument("--min_constitutive_exon_length",
                     type = "integer",
                     default = 20)
+parser$add_argument("--tss_blacklist_margin",
+                    type = "integer",
+                    default = 50,
+                    help = paste("Blacklist an intron if its 3' end lies within this many bp",
+                                 "upstream of an alternative transcription start site (first exon",
+                                 "of another isoform of the same gene). Such introns carry a",
+                                 "spurious 3' coverage spike from alt-promoter Pol II loading.",
+                                 "Set to 0 to disable blacklisting."))
 
 args <- parser$parse_args()
 
@@ -72,6 +80,17 @@ exons_and_utr <- exons_and_utr[!is.na(exons_and_utr$gene_id)]
 exons_by_gene <- split(exons, exons$gene_id)
 gene_ranges_by_gene <- split(genes, genes$gene_id)
 exons_and_utr_by_gene <- split(exons_and_utr, exons_and_utr$gene_id)
+
+# Transcription start sites (5' end of each transcript), used to blacklist introns whose
+# 3' boundary abuts an alternative TSS. When a gene has an alternative promoter, the first
+# exon of a shorter isoform starts inside the gene body; the setdiff-based intron of the
+# longer isoform then ends at that TSS (a non-splice boundary), and alt-promoter Pol II
+# loading / 5' heterogeneity piles reads up just upstream of it, producing a spurious 3' spike.
+exons_with_transcript <- exons[!is.na(exons$transcript_id)]
+transcript_spans <- unlist(range(split(exons_with_transcript, exons_with_transcript$transcript_id)))
+tss_points <- resize(transcript_spans, width = 1L, fix = "start")
+tss_points$gene_id <- exons_with_transcript$gene_id[
+  match(names(tss_points), exons_with_transcript$transcript_id)]
 
 # Extract introns
 introns_by_gene <- bplapply(
@@ -162,13 +181,45 @@ for (feature_name in names(features_list)) {
   if (feature_name == "constitutive_exons") {
     mcols(features)$constitutive_exon_id <- features$name
     features$type <- "constitutive_exon"
+
+    rtracklayer::export(features, file.path(output_folder, "constitutive_exons.bed"), format = "BED")
+    rtracklayer::export(features, file.path(output_folder, "constitutive_exons.gtf"), format = "GTF")
+
   } else if (feature_name == "introns") {
     mcols(features)$intron_id <- features$name
     features$type <- "intron"
-  }
 
-  rtracklayer::export(features, file.path(output_folder, paste0(feature_name, ".bed")), format = "BED")
-  rtracklayer::export(features, file.path(output_folder, paste0(feature_name, ".gtf")), format = "GTF")
+    # Flag introns whose 3' end lies within tss_blacklist_margin bp upstream of an alternative
+    # TSS of the same gene (see TSS computation above). The intron numbering / IDs are assigned
+    # over the full set before this split, so kept introns keep stable positional IDs (the
+    # numbering may have gaps where blacklisted introns were removed).
+    blacklist_reason <- rep(NA_character_, length(features))
+    if (args$tss_blacklist_margin > 0) {
+      intron_downstream <- flank(features, width = args$tss_blacklist_margin, start = FALSE)
+      hits <- findOverlaps(intron_downstream, tss_points, ignore.strand = FALSE)
+      hits <- hits[features$gene_id[queryHits(hits)] == tss_points$gene_id[subjectHits(hits)]]
+      if (length(hits) > 0) {
+        reason_by_intron <- tapply(names(tss_points)[subjectHits(hits)],
+                                   queryHits(hits),
+                                   function(tx) paste(sort(unique(tx)), collapse = ","))
+        blacklist_reason[as.integer(names(reason_by_intron))] <- unname(reason_by_intron)
+      }
+    }
+
+    blacklist_mask <- !is.na(blacklist_reason)
+    kept_introns <- features[!blacklist_mask]
+    blacklisted_introns <- features[blacklist_mask]
+    blacklisted_introns$alt_tss_transcript <- blacklist_reason[blacklist_mask]
+
+    message(sprintf(
+      "Introns: %d total, %d blacklisted (alt-TSS within %d bp of 3' end), %d kept.",
+      length(features), length(blacklisted_introns), args$tss_blacklist_margin, length(kept_introns)))
+
+    rtracklayer::export(kept_introns, file.path(output_folder, "introns.bed"), format = "BED")
+    rtracklayer::export(kept_introns, file.path(output_folder, "introns.gtf"), format = "GTF")
+    rtracklayer::export(blacklisted_introns, file.path(output_folder, "blacklisted_introns.bed"), format = "BED")
+    rtracklayer::export(blacklisted_introns, file.path(output_folder, "blacklisted_introns.gtf"), format = "GTF")
+  }
 
 }
 

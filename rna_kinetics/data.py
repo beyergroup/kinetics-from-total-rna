@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -5,7 +6,91 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from pol_ii_speed_modeling.pol_ii_model import GeneData, DatasetMetadata
+
+@dataclass
+class DatasetMetadata:
+    design_matrix: torch.Tensor
+    library_sizes: torch.Tensor
+    log_library_sizes: torch.Tensor
+    feature_names: list[str]
+    sample_names: list[str]
+    lrt_metadata: pd.DataFrame
+    reduced_matrices: dict[str, torch.Tensor]
+
+    def to(self, device):
+        self.design_matrix = self.design_matrix.to(device)
+        self.library_sizes = self.library_sizes.to(device)
+        self.log_library_sizes = self.log_library_sizes.to(device)
+        for name, matrix in self.reduced_matrices.items():
+            self.reduced_matrices[name] = matrix.to(device)
+        return self
+
+
+@dataclass
+class IntronData:
+    intron_name: str
+    gene_name: str
+    coverage: torch.Tensor  # shape (num_samples, 1, num_coverage_bins)
+
+    @property
+    def intron_names(self) -> list[str]:
+        return [self.intron_name]
+
+    def to(self, device):
+        self.coverage = self.coverage.to(device)
+        return self
+
+
+@dataclass
+class GeneData:
+    gene_name: str
+    intron_names: list[str]
+    exon_reads: torch.Tensor  # shape (num_samples,)
+    intron_reads: torch.Tensor  # shape (num_samples, num_introns)
+    coverage: torch.Tensor  # shape (num_samples, num_introns, num_coverage_bins)
+    isoform_length_offset: torch.Tensor  # shape (num_samples,)
+
+    def to(self, device):
+        self.exon_reads = self.exon_reads.to(device)
+        self.intron_reads = self.intron_reads.to(device)
+        self.coverage = self.coverage.to(device)
+        self.isoform_length_offset = self.isoform_length_offset.to(device)
+        return self
+
+
+@dataclass
+class GlobalGeneData:
+    gene_names: list[str]
+    intron_names: list[str]
+    exon_reads: torch.Tensor  # (num_samples, num_genes)
+    intron_reads: torch.Tensor  # (num_samples, num_introns)
+    coverage: torch.Tensor  # (num_samples, num_introns, num_bins)
+    isoform_length_offset: torch.Tensor  # (num_samples, num_genes)
+    gene_idx: torch.Tensor  # (num_introns,) int64 — maps intron index -> gene index
+
+    def to(self, device):
+        self.exon_reads = self.exon_reads.to(device)
+        self.intron_reads = self.intron_reads.to(device)
+        self.coverage = self.coverage.to(device)
+        self.isoform_length_offset = self.isoform_length_offset.to(device)
+        self.gene_idx = self.gene_idx.to(device)
+        return self
+
+
+def concat_gene_data_list(gene_data_list: list[GeneData]) -> GlobalGeneData:
+    gene_idx = torch.cat([
+        torch.full((len(g.intron_names),), i, dtype=torch.long)
+        for i, g in enumerate(gene_data_list)
+    ])
+    return GlobalGeneData(
+        gene_names=[g.gene_name for g in gene_data_list],
+        intron_names=[name for g in gene_data_list for name in g.intron_names],
+        exon_reads=torch.stack([g.exon_reads for g in gene_data_list], dim=1),
+        intron_reads=torch.cat([g.intron_reads for g in gene_data_list], dim=1),
+        coverage=torch.cat([g.coverage for g in gene_data_list], dim=1),
+        isoform_length_offset=torch.stack([g.isoform_length_offset for g in gene_data_list], dim=1),
+        gene_idx=gene_idx,
+    )
 
 
 def load_dataset_metadata(design_matrix_file: Path,
@@ -108,3 +193,29 @@ def load_gene_data_list(modeled_genes_file: Path,
         gene_data_list.append(gene_data)
 
     return gene_data_list
+
+
+def load_intron_coverage_list(
+        modeled_introns_file: Path,
+        coverage_folder: Path,
+        sample_names: list[str],
+) -> list[IntronData]:
+    introns_df = pd.read_csv(modeled_introns_file, sep='\t')
+
+    coverage_df_by_sample: dict[str, pd.DataFrame] = {}
+    for sample_name in tqdm(sample_names, desc='Loading coverage data'):
+        coverage_df = pd.read_parquet(coverage_folder / f'{sample_name}.parquet')
+        coverage_df = coverage_df.set_index('intron_name')
+        coverage_df_by_sample[sample_name] = coverage_df
+
+    intron_data_list: list[IntronData] = []
+    for _, row in tqdm(introns_df.iterrows(), total=len(introns_df), desc='Preparing intron data'):
+        intron_id = row['intron_id']
+        gene_id = row['gene_id']
+        coverage = torch.tensor(np.stack([
+            coverage_df_by_sample[sample].loc[intron_id].values
+            for sample in sample_names
+        ]), dtype=torch.float32).unsqueeze(1)  # (num_samples, 1, num_coverage_bins)
+        intron_data_list.append(IntronData(intron_name=intron_id, gene_name=gene_id, coverage=coverage))
+
+    return intron_data_list

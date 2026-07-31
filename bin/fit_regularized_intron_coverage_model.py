@@ -7,7 +7,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from rna_kinetics.estimation import get_regularized_rna_kinetics_model_results
+from rna_kinetics.estimation import get_regularized_intron_coverage_model_results
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -26,11 +26,10 @@ if __name__ == "__main__":
     parser.add_argument('--output_name_suffix',
                         type=str,
                         default='',
-                        help='Suffix for the output CSV files.')
+                        help='Suffix for the output TSV files.')
 
     args = parser.parse_args()
-    output_folder = args.output_folder
-    output_folder.mkdir(exist_ok=True, parents=True)
+    args.output_folder.mkdir(exist_ok=True, parents=True)
 
     regularization_coefficients_df = pd.read_csv(args.regularization_coefficients, sep='\t')
 
@@ -39,17 +38,21 @@ if __name__ == "__main__":
                                           weights_only=False,
                                           map_location=device)
     dataset_metadata = cache_for_regularization.dataset_metadata
-    intron_specific_lfc = cache_for_regularization.intron_specific_lfc
-    regularized_model_params_list: list[pd.DataFrame] = [
-        get_regularized_rna_kinetics_model_results(gene_data=gene_data,
-                                                   dataset_metadata=dataset_metadata,
-                                                   intron_specific_lfc=intron_specific_lfc,
-                                                   hot_start_state_dict=model_state_dict,
-                                                   regularization_coefficients_df=regularization_coefficients_df,
-                                                   device=device)
-        for gene_data, model_state_dict in tqdm(cache_for_regularization.training_input_per_gene)]
-    all_regularized_model_param_df = pd.concat(regularized_model_params_list).reset_index(drop=True)
 
-    all_regularized_model_param_df.to_csv(output_folder / f"regularized_model_parameters{args.output_name_suffix}.tsv",
-                                          sep='\t',
-                                          index=False)
+    regularized_model_params_list = []
+    for input_data, model_state_dict in tqdm(cache_for_regularization.training_input_per_gene):
+        model_param_df = get_regularized_intron_coverage_model_results(
+            input_data=input_data,
+            dataset_metadata=dataset_metadata,
+            hot_start_state_dict=model_state_dict,
+            regularization_coefficients_df=regularization_coefficients_df,
+            device=device,
+            lfc_is_intron_specific=cache_for_regularization.lfc_is_intron_specific,
+        )
+        regularized_model_params_list.append(model_param_df)
+
+    pd.concat(regularized_model_params_list).reset_index(drop=True).to_csv(
+        args.output_folder / f'regularized_model_parameters{args.output_name_suffix}.tsv',
+        sep='\t',
+        index=False,
+    )
