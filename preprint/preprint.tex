@@ -1,4 +1,5 @@
-\documentclass{article}
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2.5cm]{geometry}
 \usepackage{graphicx} % Required for inserting images
 \usepackage{amsmath}
 \setlength{\jot}{10pt} % extra leading between lines of multi-line displays
@@ -20,9 +21,20 @@
 \bibliographystyle{apalike}
 \usepackage[font=small,labelfont=bf]{caption}
 \usepackage{authblk}
+\usepackage{xurl} % Allows URLs to be broken over lines anywhere, not just at a few characters.
 \usepackage[hidelinks]{hyperref}
 \usepackage{nameref}
 \usepackage[most]{tcolorbox}
+
+% Lets TeX stretch the spacing a little further on a final pass, rather than letting a line
+% overrun into the margin when it finds no break within its usual tolerance.
+\emergencystretch=1em
+
+% Spacing that sets the figures apart from the surrounding text. \intextsep applies to a figure
+% placed within the text, \textfloatsep to one placed at the top or the bottom of a page.
+\setlength{\intextsep}{22pt plus 4pt minus 4pt}
+\setlength{\textfloatsep}{24pt plus 4pt minus 4pt}
+\captionsetup{skip=10pt}
 
 
 \graphicspath{{./figures/}}
@@ -89,12 +101,12 @@
 
     \subsection{Model Schema and Kinetic Rates}
 
-    The transcription is started by the RNA polymerase binding to the transcription start site (TSS) on DNA. Then, the RNA polymerase transcribes DNA by moving on it, elongating the nascent transcript. Once an intron is fully transcribed, the splicing machinery removes the intron from the transcript and degrades it. Finally, mature transcripts live in the cell, until they are eventually degraded. The schema of this model is visualized in figure \ref{fig:rna_metabolism_schema}.
+    The transcription is started by the RNA polymerase binding to the transcription start site (TSS) on DNA. Then, the RNA polymerase transcribes DNA by moving on it, elongating the nascent transcript. Once an intron is fully transcribed, the splicing machinery removes the intron from the transcript and degrades it. Finally, mature transcripts live in the cell, until they are eventually degraded. The schema of this model is visualized in figure~\ref{fig:rna_metabolism_schema}.
 
 
     \begin{figure}[htbp]
         \centering
-        \includegraphics[width=0.9\textwidth]{rna_metabolism.png}
+        \includegraphics[width=1.0\textwidth]{rna_metabolism.png}
         \caption{Schema of RNA metabolism.}
         \label{fig:rna_metabolism_schema}
     \end{figure}
@@ -271,6 +283,21 @@
 	\end{equation}
 
 	The two mixture components thus have distinctly different shapes: a linearly decreasing density for nascent introns, and a uniform density for unspliced introns. The shape of the observed intron coverage is therefore informative about the mixture coefficient $\pi$, and, through \eqref{eq:pi_rates}, about the ratio $k_\mathrm{elong} / k_\mathrm{splice}$.
+	
+	An illustration of the described coverage pattern is presented in the figure~\ref{fig:intron_coverage_shape}, using a total RNA-seq dataset of the K562 human cell line. The decrease of the coverage along the intron is clearly visible when the coverage is aggregated over many introns, while the coverage of a single intron is much noisier.
+	
+	\begin{figure}[htbp]
+		\centering
+		\includegraphics[width=1.0\textwidth]{intron_coverage_shape.pdf}
+		\caption{Read coverage of introns in K562 cells, using a total RNA-seq dataset of \citet{theencodeprojectconsortiumIntegratedEncyclopediaDNA2012} (accession ENCSR000AEL, two replicates pooled).
+		The decrease of the coverage along the intron is clearly visible in the meta-coverage, while the coverage of a single intron is much noisier.
+		In both panels, the black line is the observed coverage, and the shaded areas are the fitted mixture \eqref{eq:mixture} of nascent introns (blue, linearly decreasing density \eqref{eq:p_nascent}) and unspliced introns (orange, uniform density \eqref{eq:p_unspliced}); $\hat{\pi}$ is the estimated fraction of reads originating from nascent introns.
+		\textbf{(A)} Meta-coverage of all 166,239 protein-coding introns, containing 10.3 million reads in total.
+		\textbf{(B)} Coverage of a single intron, the first intron of the \textit{ETV6} gene (66,426 bp, 1,432 reads).
+		The coverage of every intron is rescaled to 100 equally sized bins, and normalized so that the binned values sum to the number of reads of that intron; one bin in panel B therefore spans 664 bp, and features narrower than a bin appear smoothed.
+		The mixture is fitted here by maximum likelihood to the coverage shown. Our inference model also uses maximum likelihood, but parametrizes the mixture differently: there, $\pi$ is not an independent parameter, but a function of several other parameters, which are all estimated jointly (see the section \nameref{inference_model}), and it is always obtained for individual introns, rather than for a meta-coverage. The figure is therefore only an illustration of the coverage pattern, and does not show the output of our inference model.}
+		\label{fig:intron_coverage_shape}
+	\end{figure}
 
 	We note that the same argument can be also applied to whole transcripts: the fraction of exonic reads originating from nascent transcripts is
 	\begin{equation} \label{eq:pi_gene}
