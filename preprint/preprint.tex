@@ -91,7 +91,7 @@
     \end{itemize}
 
 
-    \section{Dynamical Model of RNA Metabolism}
+    \section{Dynamical Model of RNA Metabolism} \label{dynamical_model}
 
     We will now describe a simple dynamical model of RNA metabolism. For a more thorough description of the model and its assumptions, please see the section \nameref{supplementary_methods}. 
     
@@ -222,7 +222,7 @@
 	
     
 
-    \subsection{Structural Non-identifiability}
+    \subsection{Structural Non-identifiability} \label{subsec:structural_nonidef}
     
     All steady-state quantities derived above depend on ratios of the kinetic rates, rather than on the individual rates directly. Consequently, observing these steady-state quantities is informative about ratios of the kinetic rates, while the individual rates remain non-identifiable.
 
@@ -312,6 +312,17 @@
 	For most genes, the transcription time is much shorter than the mean transcript lifetime, and only a few percent of exonic reads therefore originate from nascent transcripts. In our inference model, we neglect the nascent transcript fraction, and assume that all exonic reads are originating from mature transcripts. A further quantification of the effect on our inference model is provided in the section \nameref{supplementary_methods}.
 	
 	Finally, read coverage is also affected by technical factors, such as read mappability or GC content \citep{derrienFastComputationApplications2012, loveModelingRNAseqFragment2016}. The observed coverage is therefore distorted in a sequence-dependent manner, so that the location distributions derived above are only approximate. As such distortions are determined by the underlying sequence, they affect all samples in the same way; we discuss their impact on our estimates in the section \nameref{supplementary_methods}.
+	
+	\subsection{Model parametrization}
+	We will now describe parametrization of our model. The goal of our inference task is to estimate the changes in ratios of kinetic rates between biological conditions. The model is fitted on total RNA-seq data using maximum likelihood estimation, as described below. 
+	
+	We assume dataset consisting of $n$ samples. The samples are annotated by a design matrix $X \in \mathbb{R}^{n \times q}$, where $q$ is the number of features. The intercept column is not supposed to be a part of the design matrix, as out model handles intercept terms as explicit parameters.
+	
+	We will now describe a model fitted on a specific gene, with $m \geq 1$ introns. We will discuss a variants of this model, including a one fitted on data from multiple genes jointly later on. 
+	
+	Our dynamical model has four kinetic rates, and as described in the section \nameref{subsec:structural_nonidef} above, only ratios of these rates are identifiable. There are $\binom{4}{2} = 6$ unordered pairs of
+	rates, and thus six such ratios. The corresponding six LFCs are, however, not independent of
+	each other, as their LFCs span a space of dimension $3$. Thats is, our inference model needs to parametrize only three of them, with the remaining three LFCs following as their linear combinations.
 	
 	
 	
