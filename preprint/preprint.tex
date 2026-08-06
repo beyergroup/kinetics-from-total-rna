@@ -1,4 +1,5 @@
-\documentclass{article}
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2.5cm]{geometry}
 \usepackage{graphicx} % Required for inserting images
 \usepackage{amsmath}
 \setlength{\jot}{10pt} % extra leading between lines of multi-line displays
@@ -20,9 +21,20 @@
 \bibliographystyle{apalike}
 \usepackage[font=small,labelfont=bf]{caption}
 \usepackage{authblk}
+\usepackage{xurl} % Allows URLs to be broken over lines anywhere, not just at a few characters.
 \usepackage[hidelinks]{hyperref}
 \usepackage{nameref}
 \usepackage[most]{tcolorbox}
+
+% Lets TeX stretch the spacing a little further on a final pass, rather than letting a line
+% overrun into the margin when it finds no break within its usual tolerance.
+\emergencystretch=1em
+
+% Spacing that sets the figures apart from the surrounding text. \intextsep applies to a figure
+% placed within the text, \textfloatsep to one placed at the top or the bottom of a page.
+\setlength{\intextsep}{22pt plus 4pt minus 4pt}
+\setlength{\textfloatsep}{24pt plus 4pt minus 4pt}
+\captionsetup{skip=10pt}
 
 
 \graphicspath{{./figures/}}
@@ -79,7 +91,7 @@
     \end{itemize}
 
 
-    \section{Dynamical Model of RNA Metabolism}
+    \section{Dynamical Model of RNA Metabolism} \label{dynamical_model}
 
     We will now describe a simple dynamical model of RNA metabolism. For a more thorough description of the model and its assumptions, please see the section \nameref{supplementary_methods}. 
     
@@ -89,12 +101,12 @@
 
     \subsection{Model Schema and Kinetic Rates}
 
-    The transcription is started by the RNA polymerase binding to the transcription start site (TSS) on DNA. Then, the RNA polymerase transcribes DNA by moving on it, elongating the nascent transcript. Once an intron is fully transcribed, the splicing machinery removes the intron from the transcript and degrades it. Finally, mature transcripts live in the cell, until they are eventually degraded. The schema of this model is visualized in figure \ref{fig:rna_metabolism_schema}.
+    The transcription is started by the RNA polymerase binding to the transcription start site (TSS) on DNA. Then, the RNA polymerase transcribes DNA by moving on it, elongating the nascent transcript. Once an intron is fully transcribed, the splicing machinery removes the intron from the transcript and degrades it. Finally, mature transcripts live in the cell, until they are eventually degraded. The schema of this model is visualized in figure~\ref{fig:rna_metabolism_schema}.
 
 
     \begin{figure}[htbp]
         \centering
-        \includegraphics[width=0.9\textwidth]{rna_metabolism.png}
+        \includegraphics[width=1.0\textwidth]{rna_metabolism.png}
         \caption{Schema of RNA metabolism.}
         \label{fig:rna_metabolism_schema}
     \end{figure}
@@ -112,7 +124,7 @@
     \end{itemize}
     We assume that the kinetic rates may be different for different genes, and that the splicing speed may also vary for different introns in a given gene. Moreover, we assume that the kinetic rates may vary between conditions of the sample (e.g. comparing treated versus control samples), and this variation is what our statistical model (described in the section \nameref{inference_model}) aims to estimate.
 
-    Besides these variations, we assume the kinetic rates to be constant. That is, while our model will describe how abundances of different RNA molecules change in time, the kinetic rates themselves are assumed to stay unchanged. Moreover, we assume that the elongation speed $k_{\mathrm{elong}}$ is constant across the whole gene.
+    Besides these variations, we assume the kinetic rates to be constant. That is, while our model will describe how abundances of different RNA molecules change in time, the kinetic rates themselves are assumed to stay unchanged. Moreover, we assume that the elongation speed $k_{\mathrm{elong}}$ is constant across the whole gene; we will partially relax this assumption in the section \nameref{inference_model}.
 
     We also assume the transcription to start only at TSS, and terminate at transcription end site (TES). That is, we assume no cryptic initiation within the gene body, and also no premature termination of the transcription.
 
@@ -210,7 +222,7 @@
 	
     
 
-    \subsection{Structural Non-identifiability}
+    \subsection{Structural Non-identifiability} \label{subsec:structural_nonidef}
     
     All steady-state quantities derived above depend on ratios of the kinetic rates, rather than on the individual rates directly. Consequently, observing these steady-state quantities is informative about ratios of the kinetic rates, while the individual rates remain non-identifiable.
 
@@ -230,7 +242,7 @@
 
 
     \section{Inference Model} \label{inference_model}
-    Here we describe our inference model, working with total RNA-seq data. Throughout this section we retain all modeling assumptions introduced in Section 2, and we assume the system is at steady state.
+    Here we describe our inference model, working with total RNA-seq data. As shown in the section \nameref{subsec:structural_nonidef}, the individual kinetic rates are not identifiable from steady state observations, and only their ratios can be estimated. Our inference model focuses on comparing biological conditions, and estimates LFCs of these ratios between the conditions. Throughout this section we assume the system is at steady state, and, unless stated otherwise, we retain the modeling assumptions introduced in the section \nameref{dynamical_model}.
     
     \subsection{Distinguishing Nascent and Unspliced Introns by Read Coverage}
     
@@ -271,6 +283,21 @@
 	\end{equation}
 
 	The two mixture components thus have distinctly different shapes: a linearly decreasing density for nascent introns, and a uniform density for unspliced introns. The shape of the observed intron coverage is therefore informative about the mixture coefficient $\pi$, and, through \eqref{eq:pi_rates}, about the ratio $k_\mathrm{elong} / k_\mathrm{splice}$.
+	
+	An illustration of the described coverage pattern is presented in the figure~\ref{fig:intron_coverage_shape}, using a total RNA-seq dataset of the K562 human cell line. The decrease of the coverage along the intron is clearly visible when the coverage is aggregated over many introns, while the coverage of a single intron is much noisier.
+	
+	\begin{figure}[htbp]
+		\centering
+		\includegraphics[width=1.0\textwidth]{intron_coverage_shape.pdf}
+		\caption{Read coverage of introns in K562 cells, using a total RNA-seq dataset of \citet{theencodeprojectconsortiumIntegratedEncyclopediaDNA2012} (accession ENCSR000AEL, two replicates pooled).
+		The decrease of the coverage along the intron is clearly visible in the meta-coverage, while the coverage of a single intron is much noisier.
+		In both panels, the black line is the observed coverage, and the shaded areas are the fitted mixture \eqref{eq:mixture} of nascent introns (blue, linearly decreasing density \eqref{eq:p_nascent}) and unspliced introns (orange, uniform density \eqref{eq:p_unspliced}); $\hat{\pi}$ is the estimated fraction of reads originating from nascent introns.
+		\textbf{(A)} Meta-coverage of all 166,239 protein-coding introns, containing 10.3 million reads in total.
+		\textbf{(B)} Coverage of a single intron, the first intron of the \textit{ETV6} gene (66,426 bp, 1,432 reads).
+		The coverage of every intron is rescaled to 100 equally sized bins, and normalized so that the binned values sum to the number of reads of that intron; one bin in panel B therefore spans 664 bp, and features narrower than a bin appear smoothed.
+		The mixture is fitted here by maximum likelihood to the coverage shown. Our inference model also uses maximum likelihood, but parametrizes the mixture differently: there, $\pi$ is not an independent parameter, but a function of several other parameters, which are all estimated jointly (see the section \nameref{inference_model}), and it is always obtained for individual introns, rather than for a meta-coverage. The figure is therefore only an illustration of the coverage pattern, and does not show the output of our inference model.}
+		\label{fig:intron_coverage_shape}
+	\end{figure}
 
 	We note that the same argument can be also applied to whole transcripts: the fraction of exonic reads originating from nascent transcripts is
 	\begin{equation} \label{eq:pi_gene}
@@ -285,6 +312,36 @@
 	For most genes, the transcription time is much shorter than the mean transcript lifetime, and only a few percent of exonic reads therefore originate from nascent transcripts. In our inference model, we neglect the nascent transcript fraction, and assume that all exonic reads are originating from mature transcripts. A further quantification of the effect on our inference model is provided in the section \nameref{supplementary_methods}.
 	
 	Finally, read coverage is also affected by technical factors, such as read mappability or GC content \citep{derrienFastComputationApplications2012, loveModelingRNAseqFragment2016}. The observed coverage is therefore distorted in a sequence-dependent manner, so that the location distributions derived above are only approximate. As such distortions are determined by the underlying sequence, they affect all samples in the same way; we discuss their impact on our estimates in the section \nameref{supplementary_methods}.
+	
+	\subsection{Model parametrization}
+	We will now describe parametrization of our model. The goal of our inference task is to estimate the changes in ratios of kinetic rates between biological conditions. The model is fitted on total RNA-seq data using maximum likelihood estimation, as described below. 
+	
+	We assume a dataset consisting of $n$ samples. The samples are annotated by a design matrix $X \in \mathbb{R}^{n \times q}$, where $q$ is the number of features. The intercept column is not supposed to be a part of the design matrix, as our model handles intercept terms as explicit parameters.
+
+	We will now describe a model fitted on a specific gene, with $m \geq 1$ introns. We will discuss variants of this model, including one fitted on data from multiple genes jointly later on.
+
+	Our inference model relaxes one assumption of the section \nameref{dynamical_model}: we require the elongation speed to be constant only within each intron, and denote by $k_{\mathrm{elong},i}$ the elongation speed over the intron $i$. The polymerase density then remains constant within each intron, equal to $k_{\mathrm{init}} / k_{\mathrm{elong},i}$, so the results \eqref{eq:i_nas_ss}, \eqref{eq:p_nascent} and \eqref{eq:pi_rates} hold as derived, with $k_{\mathrm{elong}}$ replaced by $k_{\mathrm{elong},i}$.
+
+	Our dynamical model has four kinetic rates, and as described in the section \nameref{subsec:structural_nonidef} above, only ratios of these rates are identifiable. There are $\binom{4}{2} = 6$ unordered pairs of
+	rates, and thus six such ratios up to inversion. The corresponding six LFCs are, however, not independent of
+	each other, as they span a space of dimensionality $3$: each of them is a difference of two of the four individual rate LFCs, and such differences span a three-dimensional space, since the four individual LFCs are determined only up to a common additive shift, which is exactly the scaling invariance \eqref{eq:scaling_invariance}. That is, our inference model needs to parametrize only three of them, with the remaining three LFCs following as their linear combinations.
+
+	The choice of which three ratios to parametrize is a matter of convention: any other choice of three independent ratios is a linear reparametrization of the same three-dimensional space. We parametrize the three ratios that share $k_{\mathrm{deg}}$ as their denominator, and denote
+	their LFCs as
+	\begin{subequations}
+		\begin{align}
+			\alpha &= \mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{deg}}) \label{eq:alpha_def}\\
+			\beta &= \mathrm{LFC}(k_{\mathrm{elong}} / k_{\mathrm{deg}}) \label{eq:beta_def}\\
+			\gamma &= \mathrm{LFC}(k_{\mathrm{splice}} / k_{\mathrm{deg}}) \label{eq:gamma_def}
+		\end{align}
+	\end{subequations}
+	The remaining three LFCs are obtained as their differences,
+	$\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{elong}}) = \alpha - \beta$,
+	$\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{splice}}) = \alpha - \gamma$ and
+	$\mathrm{LFC}(k_{\mathrm{elong}} / k_{\mathrm{splice}}) = \beta - \gamma$, and reversing the
+	order of the rates in a ratio flips the sign of its LFC.
+
+	This parametrization corresponds directly to the steady state solution of the section \nameref{subsec:steady_state}. The mature transcript pool \eqref{eq:t_mat_ss} changes by $\mathrm{LFC}(T_{\mathrm{mature}}) = \alpha$, which is the quantity reported by a standard differential expression analysis; the nascent intron pool \eqref{eq:i_nas_ss} changes by $\alpha - \beta$, and the unspliced intron pool \eqref{eq:i_unspliced_ss} by $\alpha - \gamma$. The remaining combination $\beta - \gamma$ is the LFC of the ratio $k_{\mathrm{elong}} / k_{\mathrm{splice}}$, which determines the intron coverage shape through \eqref{eq:pi_rates}.
 	
 	
 	

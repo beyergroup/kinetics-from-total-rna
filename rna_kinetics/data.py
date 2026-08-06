@@ -97,8 +97,10 @@ def load_dataset_metadata(design_matrix_file: Path,
                           library_size_factors_file: Path,
                           lrt_metadata_file: Path,
                           reduced_matrices_folder: Path) -> DatasetMetadata:
-    design_matrix_df = pd.read_csv(design_matrix_file, sep='\t')
-    library_size_factors_df = pd.read_csv(library_size_factors_file, sep='\t')
+    # Sample names are kept as strings: they are used to select columns of the count tables and to
+    # build coverage file names, and purely numeric sample names would otherwise be parsed as ints.
+    design_matrix_df = pd.read_csv(design_matrix_file, sep='\t', dtype={'sample': str})
+    library_size_factors_df = pd.read_csv(library_size_factors_file, sep='\t', dtype={'sample': str})
 
     design_matrix_df = design_matrix_df.merge(library_size_factors_df,
                                               left_on='sample',
@@ -110,7 +112,8 @@ def load_dataset_metadata(design_matrix_file: Path,
     lrt_metadata = pd.read_csv(lrt_metadata_file, sep='\t')
     reduced_matrices: dict[str, torch.Tensor] = {}
     for test_id in lrt_metadata['test_id']:
-        reduced_matrix_df = pd.read_csv(reduced_matrices_folder / f"{test_id}.tsv", sep='\t').set_index('sample')
+        reduced_matrix_df = pd.read_csv(reduced_matrices_folder / f"{test_id}.tsv", sep='\t',
+                                        dtype={'sample': str}).set_index('sample')
         if not all(design_matrix_df.index == reduced_matrix_df.index):
             raise ValueError(
                 f"Reduced matrix index {reduced_matrix_df.index} does not equal to design matrix index {design_matrix_df.index}.")
