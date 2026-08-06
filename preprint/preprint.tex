@@ -124,7 +124,7 @@
     \end{itemize}
     We assume that the kinetic rates may be different for different genes, and that the splicing speed may also vary for different introns in a given gene. Moreover, we assume that the kinetic rates may vary between conditions of the sample (e.g. comparing treated versus control samples), and this variation is what our statistical model (described in the section \nameref{inference_model}) aims to estimate.
 
-    Besides these variations, we assume the kinetic rates to be constant. That is, while our model will describe how abundances of different RNA molecules change in time, the kinetic rates themselves are assumed to stay unchanged. Moreover, we assume that the elongation speed $k_{\mathrm{elong}}$ is constant across the whole gene.
+    Besides these variations, we assume the kinetic rates to be constant. That is, while our model will describe how abundances of different RNA molecules change in time, the kinetic rates themselves are assumed to stay unchanged. Moreover, we assume that the elongation speed $k_{\mathrm{elong}}$ is constant across the whole gene; we will partially relax this assumption in the section \nameref{inference_model}.
 
     We also assume the transcription to start only at TSS, and terminate at transcription end site (TES). That is, we assume no cryptic initiation within the gene body, and also no premature termination of the transcription.
 
@@ -242,7 +242,7 @@
 
 
     \section{Inference Model} \label{inference_model}
-    Here we describe our inference model, working with total RNA-seq data. Throughout this section we retain all modeling assumptions introduced in Section 2, and we assume the system is at steady state.
+    Here we describe our inference model, working with total RNA-seq data. As shown in the section \nameref{subsec:structural_nonidef}, the individual kinetic rates are not identifiable from steady state observations, and only their ratios can be estimated. Our inference model focuses on comparing biological conditions, and estimates LFCs of these ratios between the conditions. Throughout this section we assume the system is at steady state, and, unless stated otherwise, we retain the modeling assumptions introduced in the section \nameref{dynamical_model}.
     
     \subsection{Distinguishing Nascent and Unspliced Introns by Read Coverage}
     
@@ -316,13 +316,32 @@
 	\subsection{Model parametrization}
 	We will now describe parametrization of our model. The goal of our inference task is to estimate the changes in ratios of kinetic rates between biological conditions. The model is fitted on total RNA-seq data using maximum likelihood estimation, as described below. 
 	
-	We assume dataset consisting of $n$ samples. The samples are annotated by a design matrix $X \in \mathbb{R}^{n \times q}$, where $q$ is the number of features. The intercept column is not supposed to be a part of the design matrix, as out model handles intercept terms as explicit parameters.
-	
-	We will now describe a model fitted on a specific gene, with $m \geq 1$ introns. We will discuss a variants of this model, including a one fitted on data from multiple genes jointly later on. 
-	
+	We assume a dataset consisting of $n$ samples. The samples are annotated by a design matrix $X \in \mathbb{R}^{n \times q}$, where $q$ is the number of features. The intercept column is not supposed to be a part of the design matrix, as our model handles intercept terms as explicit parameters.
+
+	We will now describe a model fitted on a specific gene, with $m \geq 1$ introns. We will discuss variants of this model, including one fitted on data from multiple genes jointly later on.
+
+	Our inference model relaxes one assumption of the section \nameref{dynamical_model}: we require the elongation speed to be constant only within each intron, and denote by $k_{\mathrm{elong},i}$ the elongation speed over the intron $i$. The polymerase density then remains constant within each intron, equal to $k_{\mathrm{init}} / k_{\mathrm{elong},i}$, so the results \eqref{eq:i_nas_ss}, \eqref{eq:p_nascent} and \eqref{eq:pi_rates} hold as derived, with $k_{\mathrm{elong}}$ replaced by $k_{\mathrm{elong},i}$.
+
 	Our dynamical model has four kinetic rates, and as described in the section \nameref{subsec:structural_nonidef} above, only ratios of these rates are identifiable. There are $\binom{4}{2} = 6$ unordered pairs of
-	rates, and thus six such ratios. The corresponding six LFCs are, however, not independent of
-	each other, as their LFCs span a space of dimension $3$. Thats is, our inference model needs to parametrize only three of them, with the remaining three LFCs following as their linear combinations.
+	rates, and thus six such ratios up to inversion. The corresponding six LFCs are, however, not independent of
+	each other, as they span a space of dimensionality $3$: each of them is a difference of two of the four individual rate LFCs, and such differences span a three-dimensional space, since the four individual LFCs are determined only up to a common additive shift, which is exactly the scaling invariance \eqref{eq:scaling_invariance}. That is, our inference model needs to parametrize only three of them, with the remaining three LFCs following as their linear combinations.
+
+	The choice of which three ratios to parametrize is a matter of convention: any other choice of three independent ratios is a linear reparametrization of the same three-dimensional space. We parametrize the three ratios that share $k_{\mathrm{deg}}$ as their denominator, and denote
+	their LFCs as
+	\begin{subequations}
+		\begin{align}
+			\alpha &= \mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{deg}}) \label{eq:alpha_def}\\
+			\beta &= \mathrm{LFC}(k_{\mathrm{elong}} / k_{\mathrm{deg}}) \label{eq:beta_def}\\
+			\gamma &= \mathrm{LFC}(k_{\mathrm{splice}} / k_{\mathrm{deg}}) \label{eq:gamma_def}
+		\end{align}
+	\end{subequations}
+	The remaining three LFCs are obtained as their differences,
+	$\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{elong}}) = \alpha - \beta$,
+	$\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{splice}}) = \alpha - \gamma$ and
+	$\mathrm{LFC}(k_{\mathrm{elong}} / k_{\mathrm{splice}}) = \beta - \gamma$, and reversing the
+	order of the rates in a ratio flips the sign of its LFC.
+
+	This parametrization corresponds directly to the steady state solution of the section \nameref{subsec:steady_state}. The mature transcript pool \eqref{eq:t_mat_ss} changes by $\mathrm{LFC}(T_{\mathrm{mature}}) = \alpha$, which is the quantity reported by a standard differential expression analysis; the nascent intron pool \eqref{eq:i_nas_ss} changes by $\alpha - \beta$, and the unspliced intron pool \eqref{eq:i_unspliced_ss} by $\alpha - \gamma$. The remaining combination $\beta - \gamma$ is the LFC of the ratio $k_{\mathrm{elong}} / k_{\mathrm{splice}}$, which determines the intron coverage shape through \eqref{eq:pi_rates}.
 	
 	
 	
