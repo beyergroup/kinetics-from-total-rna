@@ -316,33 +316,65 @@
 	\subsection{Model parametrization}
 	We will now describe parametrization of our model. The goal of our inference task is to estimate the changes in ratios of kinetic rates between biological conditions. The model is fitted on total RNA-seq data using maximum likelihood estimation, as described below. 
 	
-	We assume a dataset consisting of $n$ samples. The samples are annotated by a design matrix $X \in \mathbb{R}^{n \times q}$, where $q$ is the number of features. The intercept column is not supposed to be a part of the design matrix, as our model handles intercept terms as explicit parameters.
+	We assume a dataset consisting of $n$ samples. The samples are annotated by a design matrix $\boldsymbol{X} \in \mathbb{R}^{n \times q}$, where $q$ is the number of features. The intercept column is not supposed to be a part of the design matrix, as our model handles intercept terms as explicit parameters.
 
 	We will now describe a model fitted on a specific gene, with $m \geq 1$ introns. We will discuss variants of this model, including one fitted on data from multiple genes jointly later on.
 
-	Our inference model relaxes one assumption of the section \nameref{dynamical_model}: we require the elongation speed to be constant only within each intron, and denote by $k_{\mathrm{elong},i}$ the elongation speed over the intron $i$. The polymerase density then remains constant within each intron, equal to $k_{\mathrm{init}} / k_{\mathrm{elong},i}$, so the results \eqref{eq:i_nas_ss}, \eqref{eq:p_nascent} and \eqref{eq:pi_rates} hold as derived, with $k_{\mathrm{elong}}$ replaced by $k_{\mathrm{elong},i}$.
+	Our inference model relaxes one assumption of the section \nameref{dynamical_model}: we require the elongation speed to be constant only within each intron, and denote by $k_{\mathrm{elong},i}$ the elongation speed over the intron $i$. The polymerase density then remains constant within each intron, equal to $k_{\mathrm{init}} / k_{\mathrm{elong},i}$, so the results \eqref{eq:i_nas_ss}, \eqref{eq:pi_rates} and \eqref{eq:p_nascent} hold as derived, with $k_{\mathrm{elong}}$ replaced by $k_{\mathrm{elong},i}$. The splicing speed may differ between the introns of a gene, as assumed in the section \nameref{dynamical_model}, and we denote by $k_{\mathrm{splice},i}$ the splicing speed of the intron $i$.
 
 	Our dynamical model has four kinetic rates, and as described in the section \nameref{subsec:structural_nonidef} above, only ratios of these rates are identifiable. There are $\binom{4}{2} = 6$ unordered pairs of
-	rates, and thus six such ratios up to inversion. The corresponding six LFCs are, however, not independent of
-	each other, as they span a space of dimensionality $3$: each of them is a difference of two of the four individual rate LFCs, and such differences span a three-dimensional space, since the four individual LFCs are determined only up to a common additive shift, which is exactly the scaling invariance \eqref{eq:scaling_invariance}. That is, our inference model needs to parametrize only three of them, with the remaining three LFCs following as their linear combinations.
-
-	The choice of which three ratios to parametrize is a matter of convention: any other choice of three independent ratios is a linear reparametrization of the same three-dimensional space. We parametrize the three ratios that share $k_{\mathrm{deg}}$ as their denominator, and denote
+	rates, and thus six such ratios up to inversion. However, their LFCs span only a three-dimensional space, and our model thus parametrize only three of them. The choice of which LFCs to parametrize is only a matter of convention; we choose the three ratios that share $k_{\mathrm{deg}}$ as their denominator, and denote
 	their LFCs as
 	\begin{subequations}
 		\begin{align}
-			\alpha &= \mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{deg}}) \label{eq:alpha_def}\\
-			\beta &= \mathrm{LFC}(k_{\mathrm{elong}} / k_{\mathrm{deg}}) \label{eq:beta_def}\\
-			\gamma &= \mathrm{LFC}(k_{\mathrm{splice}} / k_{\mathrm{deg}}) \label{eq:gamma_def}
+			\boldsymbol{\alpha} &= \mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{deg}}) \label{eq:alpha_def}\\
+			\boldsymbol{\beta}_i &= \mathrm{LFC}(k_{\mathrm{elong},i} / k_{\mathrm{deg}}) \label{eq:beta_def}\\
+			\boldsymbol{\gamma}_i &= \mathrm{LFC}(k_{\mathrm{splice},i} / k_{\mathrm{deg}}) \label{eq:gamma_def}
 		\end{align}
 	\end{subequations}
-	The remaining three LFCs are obtained as their differences,
-	$\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{elong}}) = \alpha - \beta$,
-	$\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{splice}}) = \alpha - \gamma$ and
-	$\mathrm{LFC}(k_{\mathrm{elong}} / k_{\mathrm{splice}}) = \beta - \gamma$, and reversing the
-	order of the rates in a ratio flips the sign of its LFC.
+	The initiation and degradation rates are properties of the whole gene, giving us a single $\boldsymbol{\alpha}$, while the elongation and splicing speeds may differ between the introns, so we have one $\boldsymbol{\beta}_i$ and one $\boldsymbol{\gamma}_i$ for each of the $m$ introns. Each of these parameters is a vector in $\mathbb{R}^{q}$, holding one coefficient per feature of the design matrix, so that $\boldsymbol{X} \boldsymbol{\alpha} \in \mathbb{R}^{n}$ gives the LFC of $k_{\mathrm{init}} / k_{\mathrm{deg}}$ in each of the $n$ samples, and similarly for $\boldsymbol{\beta}_i$ and $\boldsymbol{\gamma}_i$.
 
-	This parametrization corresponds directly to the steady state solution of the section \nameref{subsec:steady_state}. The mature transcript pool \eqref{eq:t_mat_ss} changes by $\mathrm{LFC}(T_{\mathrm{mature}}) = \alpha$, which is the quantity reported by a standard differential expression analysis; the nascent intron pool \eqref{eq:i_nas_ss} changes by $\alpha - \beta$, and the unspliced intron pool \eqref{eq:i_unspliced_ss} by $\alpha - \gamma$. The remaining combination $\beta - \gamma$ is the LFC of the ratio $k_{\mathrm{elong}} / k_{\mathrm{splice}}$, which determines the intron coverage shape through \eqref{eq:pi_rates}.
+	The remaining three LFCs are obtained as their differences, for each intron $i$,
+	$\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{elong},i}) = \boldsymbol{\alpha} - \boldsymbol{\beta}_i$,
+	$\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{splice},i}) = \boldsymbol{\alpha} - \boldsymbol{\gamma}_i$ and
+	$\mathrm{LFC}(k_{\mathrm{elong},i} / k_{\mathrm{splice},i}) = \boldsymbol{\beta}_i - \boldsymbol{\gamma}_i$, and reversing the
+	order of the rates in a ratio flips the sign of its LFC. All six ratio LFCs are therefore determined by $\boldsymbol{\alpha}$, $\boldsymbol{\beta}_i$ and $\boldsymbol{\gamma}_i$.
+
+	This parametrization corresponds directly to the steady state solution of the section \nameref{subsec:steady_state}. The mature transcript pool \eqref{eq:t_mat_ss} changes by $\mathrm{LFC}(T_{\mathrm{mature}}) = \boldsymbol{\alpha}$, which is the quantity reported by a standard differential expression analysis; the nascent pool of the intron $i$ \eqref{eq:i_nas_ss} changes by $\boldsymbol{\alpha} - \boldsymbol{\beta}_i$, and its unspliced pool \eqref{eq:i_unspliced_ss} by $\boldsymbol{\alpha} - \boldsymbol{\gamma}_i$. The remaining combination $\boldsymbol{\beta}_i - \boldsymbol{\gamma}_i$ is the LFC of the ratio $k_{\mathrm{elong},i} / k_{\mathrm{splice},i}$, which determines the coverage shape of the intron $i$ through \eqref{eq:pi_rates}.
 	
+	The model predicts the following quantities, each of them a vector in $\mathbb{R}^{n}$ holding one value per sample:
+	\begin{itemize}
+		\item The number of exonic reads $\boldsymbol{\mu}^{\mathrm{exon}}$.
+		\item The number of intronic reads $\boldsymbol{\mu}^{\mathrm{intron}}_i$ for each intron $i$.
+		\item The mixture coefficient $\boldsymbol{\pi}_i$ of the mixture \eqref{eq:mixture}, specifying the shape of the coverage of the intron $i$.
+	\end{itemize}
+
+	The predictions give rise to the likelihood function, which is then used for estimation and inference, as described below in section XYZ.
+	  
+	The prediction also utilize several nuisance parameters:
+	
+	\begin{itemize}
+		\item Intercept term for exon read count $c^{exon}$.
+		\item Intercept term for intron read count $c^{intron}_{i}$, specified for each intron $i$. 
+		\item Intercept term $c^{\pi}_{i}$ for each intron $i$, that will be used for prediction of the intron coverage parameter $\pi$.
+	\end{itemize}
+
+	Beside these nuisance parameters, we also utilize the following offset terms, estimated independently of the model parameters:
+	\begin{itemize}
+		\item Library size $\ell_s$ of sample $s$, reflecting the sequencing depth. The same value of $\ell_s$ is used for every gene in the sample $s$.
+		\item Average transcript length $t_{s}$ for sample $s$, reflecting the effect of alternative exon splicing. The value $t_{s}$ is estimated for each gene separately.
+	\end{itemize}
+
+	The model predictions are then
+	\begin{subequations}
+	\begin{align}
+		\mu^{exon} &= \exp \left( \boldsymbol{X} \boldsymbol{\alpha} + c^{exon} + \log( \ell_s) + \log(t_s) \right) \label{eq:pred_mu_exon}\\
+		\mu^{intron}_{i} &= \exp \left( \boldsymbol{X} (\boldsymbol{\alpha} - \boldsymbol{\beta})  + c^{intron} + c^{\pi}_{i} + \log( \ell_s) \right) + \exp \left( \boldsymbol{X} (\boldsymbol{\alpha} - \boldsymbol{\gamma})  + c^{intron} + \log( \ell_s) \right) \label{eq:pred_mu_intron}\\
+		\pi_{i} &= \sigma \left( c^{\pi}_{i} + \boldsymbol{X} (\boldsymbol{\gamma} - \boldsymbol{\beta})   \right) \label{eq:pred_pi}		
+	\end{align}
+	\end{subequations}
+	 
+	 where $\sigma(x) = exp(x) / (1+exp(x))$ is the sigmoid function.
 	
 	
 	
