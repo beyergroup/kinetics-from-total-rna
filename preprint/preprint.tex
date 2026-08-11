@@ -334,12 +334,16 @@
 	The initiation and degradation rates are properties of the whole gene, giving us a single $\boldsymbol{\alpha}$, while the elongation and splicing speeds may differ between the introns, so we have one $\boldsymbol{\beta}_i$ and one $\boldsymbol{\gamma}_i$ for each of the $m$ introns. Each of these parameters is a vector in $\mathbb{R}^{q}$, holding one coefficient per feature of the design matrix.
 
 	The remaining three LFCs are obtained as their differences, for each intron $i$,
-	$\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{elong},i}) = \boldsymbol{\alpha} - \boldsymbol{\beta}_i$,
-	$\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{splice},i}) = \boldsymbol{\alpha} - \boldsymbol{\gamma}_i$ and
-	$\mathrm{LFC}(k_{\mathrm{elong},i} / k_{\mathrm{splice},i}) = \boldsymbol{\beta}_i - \boldsymbol{\gamma}_i$, and reversing the
-	order of the rates in a ratio flips the sign of its LFC. All six ratio LFCs are therefore determined by $\boldsymbol{\alpha}$, $\boldsymbol{\beta}_i$ and $\boldsymbol{\gamma}_i$.
+	\begin{subequations}
+		\begin{align}
+			\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{elong},i}) &= \boldsymbol{\alpha} - \boldsymbol{\beta}_i \label{eq:lfc_init_over_elong}\\
+			\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{splice},i}) &= \boldsymbol{\alpha} - \boldsymbol{\gamma}_i \label{eq:lfc_init_over_splice}\\
+			\mathrm{LFC}(k_{\mathrm{elong},i} / k_{\mathrm{splice},i}) &= \boldsymbol{\beta}_i - \boldsymbol{\gamma}_i \label{eq:lfc_elong_over_splice}
+		\end{align}
+	\end{subequations}
+	Reversing the order of the rates in a ratio flips the sign of its LFC. All six ratio LFCs are therefore determined by $\boldsymbol{\alpha}$, $\boldsymbol{\beta}_i$ and $\boldsymbol{\gamma}_i$.
 
-	This parametrization corresponds directly to the steady state solution of the section \nameref{subsec:steady_state}. The mature transcript pool \eqref{eq:t_mat_ss} changes by $\mathrm{LFC}(T_{\mathrm{mature}}) = \boldsymbol{\alpha}$, which is the quantity reported by a standard differential expression analysis; the nascent pool of the intron $i$ \eqref{eq:i_nas_ss} changes by $\boldsymbol{\alpha} - \boldsymbol{\beta}_i$, and its unspliced pool \eqref{eq:i_unspliced_ss} by $\boldsymbol{\alpha} - \boldsymbol{\gamma}_i$. The remaining combination $\boldsymbol{\beta}_i - \boldsymbol{\gamma}_i$ is the LFC of the ratio $k_{\mathrm{elong},i} / k_{\mathrm{splice},i}$, which determines the coverage shape of the intron $i$ through \eqref{eq:pi_rates}.
+	This parametrization corresponds directly to the steady state solution of the section \nameref{subsec:steady_state}. The mature transcript pool \eqref{eq:t_mat_ss} changes by $\mathrm{LFC}(T_{\mathrm{mature}}) = \boldsymbol{\alpha}$, which is the quantity reported by a standard differential expression analysis; the nascent pool of the intron $i$ \eqref{eq:i_nas_ss} changes by $\boldsymbol{\alpha} - \boldsymbol{\beta}_i$, and its unspliced pool \eqref{eq:i_unspliced_ss} by $\boldsymbol{\alpha} - \boldsymbol{\gamma}_i$, following \eqref{eq:lfc_init_over_elong} and \eqref{eq:lfc_init_over_splice}. The remaining combination $\boldsymbol{\beta}_i - \boldsymbol{\gamma}_i$ \eqref{eq:lfc_elong_over_splice} is the LFC of the ratio $k_{\mathrm{elong},i} / k_{\mathrm{splice},i}$, which determines the coverage shape of the intron $i$ through \eqref{eq:pi_rates}.
 	
 	The model predicts the following quantities, each of them a vector in $\mathbb{R}^{n}$ holding one value per sample:
 	\begin{itemize}
@@ -364,7 +368,7 @@
 		\item The average transcript length $\boldsymbol{L}^{\mathrm{tx}}$, reflecting the effect of alternative exon splicing. It is estimated for each gene separately.
 	\end{itemize}
 
-	The model predictions are then
+	The model predictions are then:
 	\begin{tcolorbox}[
 		colback=white, colframe=black, boxrule=0.4pt, arc=1pt,
 		title=Model predictions, fonttitle=\bfseries\small,
@@ -383,9 +387,9 @@
 	\end{tcolorbox}
 	We will now comment on the model predictions described above.
 	\begin{itemize}
-		\item All the operations above are applied elementwise, so that each equation holds separately in every sample. The intercept terms $c^{\mathrm{exon}}$, $c^{\mathrm{intron}}_{i}$ and $c^{\pi}_{i}$ are scalars, added to every entry of the corresponding vector.
-		\item The predicted intronic reads are split into the two pools of the mixture \eqref{eq:mixture}: reads from nascent introns \eqref{eq:pred_mu_nascent}, and reads from unspliced introns \eqref{eq:pred_mu_unspliced}. Their changes between conditions are $\boldsymbol{\alpha} - \boldsymbol{\beta}_i$ and $\boldsymbol{\alpha} - \boldsymbol{\gamma}_i$, matching the steady state pools \eqref{eq:i_nas_ss} and \eqref{eq:i_unspliced_ss}.
-		\item The prediction of $\boldsymbol{\pi}_i$ \eqref{eq:pred_pi} is the fraction of intronic reads originating from nascent introns, exactly as defined in \eqref{eq:pi_counts}. Dividing through by $\boldsymbol{\mu}^{\mathrm{nascent}}_{i}$ gives the equivalent form $\boldsymbol{\pi}_i = \sigma \left( c^{\pi}_{i} + \boldsymbol{X} (\boldsymbol{\gamma}_i - \boldsymbol{\beta}_i) \right)$, where $\sigma(x) = \exp(x) / (1 + \exp(x))$ is the sigmoid function.
+		\item The division in \eqref{eq:pred_pi} is applied elementwise, and the scalar intercepts $c^{\mathrm{exon}}$, $c^{\mathrm{intron}}_{i}$ and $c^{\pi}_{i}$ are added to every entry of the corresponding vector.
+		\item The predicted intronic reads are split into the two pools of the mixture \eqref{eq:mixture}: reads from nascent introns \eqref{eq:pred_mu_nascent}, and reads from unspliced introns \eqref{eq:pred_mu_unspliced}. Their changes between conditions are $\boldsymbol{\alpha} - \boldsymbol{\beta}_i$ and $\boldsymbol{\alpha} - \boldsymbol{\gamma}_i$, matching the steady state pools \eqref{eq:i_nas_ss} and \eqref{eq:i_unspliced_ss}. The two pools are only intermediate quantities, and enter the likelihood through $\boldsymbol{\mu}^{\mathrm{intron}}_{i}$ and $\boldsymbol{\pi}_{i}$.
+		\item The prediction of $\boldsymbol{\pi}_i$ \eqref{eq:pred_pi} is the fraction of intronic reads originating from nascent introns, as defined in \eqref{eq:pi_counts}. Dividing through by $\boldsymbol{\mu}^{\mathrm{nascent}}_{i}$ gives the equivalent form $\boldsymbol{\pi}_i = \sigma \left( c^{\pi}_{i} + \boldsymbol{X} (\boldsymbol{\gamma}_i - \boldsymbol{\beta}_i) \right)$, where $\sigma(x) = \exp(x) / (1 + \exp(x))$ is the sigmoid function.
 		\item The intercept $c^{\pi}_{i}$ therefore collects everything that shifts the coverage shape of the intron $i$ but does not change between the conditions, namely $\log ( L_{\mathrm{intron},i} / 2 )$ and the ratio $k_{\mathrm{splice},i} / k_{\mathrm{elong},i}$ in the reference condition, following \eqref{eq:pi_rates}. The intron lengths are for this reason not needed as an input of our model.
 	\end{itemize}
 	
