@@ -313,10 +313,10 @@
 	
 	Finally, read coverage is also affected by technical factors, such as read mappability or GC content \citep{derrienFastComputationApplications2012, loveModelingRNAseqFragment2016}. The observed coverage is therefore distorted in a sequence-dependent manner, so that the location distributions derived above are only approximate. As such distortions are determined by the underlying sequence, they affect all samples in the same way; we discuss their impact on our estimates in the section \nameref{supplementary_methods}.
 	
-	\subsection{Model parametrization}
+	\subsection{Model Parametrization} \label{subsec:model_param}	
 	We will now describe parametrization of our model. The goal of our inference task is to estimate the changes in ratios of kinetic rates between biological conditions. The model is fitted on total RNA-seq data using maximum likelihood estimation, as described below. Throughout the paper, we write vectors and matrices in bold, and scalars in plain type.
 	
-	We assume a dataset consisting of $n$ samples. The samples are annotated by a design matrix $\boldsymbol{X} \in \mathbb{R}^{n \times q}$, where $q$ is the number of features. The features may be, for example, indicator columns of categorical annotations, or continuous variables. The intercept column is not supposed to be a part of the design matrix, as our model handles intercept terms as explicit parameters.
+	We assume a dataset consisting of $n$ samples. The samples are annotated by a design matrix $\boldsymbol{X} \in \mathbb{R}^{n \times q}$, where $q$ is the number of features. The features may be, for example, indicator columns of categorical annotations, or continuous variables. The intercept column is not supposed to be a part of the design matrix, as our model handles intercept terms as explicit parameters. The intercept terms therefore correspond to the reference condition, that is, to samples whose row of $\boldsymbol{X}$ is zero.
 
 	We will now describe a model fitted on a specific gene, with $m \geq 1$ introns. We will discuss variants of this model, including one fitted on data from multiple genes jointly later on.
 
@@ -345,21 +345,19 @@
 
 	This parametrization corresponds directly to the steady state solution of the section \nameref{subsec:steady_state}. The mature transcript pool \eqref{eq:t_mat_ss} changes by $\mathrm{LFC}(T_{\mathrm{mature}}) = \boldsymbol{\alpha}$, which is the quantity reported by a standard differential expression analysis; the nascent pool of the intron $i$ \eqref{eq:i_nas_ss} changes by $\boldsymbol{\alpha} - \boldsymbol{\beta}_i$, and its unspliced pool \eqref{eq:i_unspliced_ss} by $\boldsymbol{\alpha} - \boldsymbol{\gamma}_i$, following \eqref{eq:lfc_init_over_elong} and \eqref{eq:lfc_init_over_splice}. The remaining combination $\boldsymbol{\beta}_i - \boldsymbol{\gamma}_i$ \eqref{eq:lfc_elong_over_splice} is the LFC of the ratio $k_{\mathrm{elong},i} / k_{\mathrm{splice},i}$, which determines the coverage shape of the intron $i$ through \eqref{eq:pi_rates}.
 	
-	The model predicts the following quantities, each of them a vector in $\mathbb{R}^{n}$ holding one value per sample:
+	The model predicts several quantities, which give rise to the likelihood function, defined in the section \nameref{subsec:likelihood}. The likelihood function is then used for parameter estimation and statistical inference, as described below. Each of the predicted quantities is a vector in $\mathbb{R}^{n}$, holding one value per sample:
 	\begin{itemize}
 		\item The number of exonic reads $\boldsymbol{\mu}^{\mathrm{exon}}$.
 		\item The number of intronic reads $\boldsymbol{\mu}^{\mathrm{intron}}_i$ for each intron $i$.
 		\item The mixture coefficient $\boldsymbol{\pi}_i$ of the mixture \eqref{eq:mixture}, specifying the shape of the coverage of the intron $i$.
 	\end{itemize}
 
-	The predictions give rise to the likelihood function, which is then used for estimation and inference, as described below in section XYZ.
-	  
 	The predictions also utilize several nuisance parameters:
 	
 	\begin{itemize}
 		\item Intercept term for exon read count $c^{\mathrm{exon}}$.
 		\item Intercept term for intron read count $c^{\mathrm{intron}}_{i}$, specified for each intron $i$. 
-		\item Intercept term $c^{\pi}_{i}$ for each intron $i$, that will be used for prediction of the intron coverage parameter $\pi$.
+		\item Intercept term $c^{\pi}_{i}$ for each intron $i$, which will be used for prediction of the intron coverage parameter $\boldsymbol{\pi}_i$.
 	\end{itemize}
 
 	Beside these nuisance parameters, we also utilize the following offset terms, estimated independently of the model parameters. Both are vectors in $\mathbb{R}^{n}$, holding one value per sample:
@@ -387,11 +385,42 @@
 	\end{tcolorbox}
 	We will now comment on the model predictions described above.
 	\begin{itemize}
-		\item The division in \eqref{eq:pred_pi} is applied elementwise, and the scalar intercepts $c^{\mathrm{exon}}$, $c^{\mathrm{intron}}_{i}$ and $c^{\pi}_{i}$ are added to every entry of the corresponding vector.
+		\item The division in \eqref{eq:pred_pi} is applied elementwise.
 		\item The predicted intronic reads are split into the two pools of the mixture \eqref{eq:mixture}: reads from nascent introns \eqref{eq:pred_mu_nascent}, and reads from unspliced introns \eqref{eq:pred_mu_unspliced}. Their changes between conditions are $\boldsymbol{\alpha} - \boldsymbol{\beta}_i$ and $\boldsymbol{\alpha} - \boldsymbol{\gamma}_i$, matching the steady state pools \eqref{eq:i_nas_ss} and \eqref{eq:i_unspliced_ss}. The two pools are only intermediate quantities, and enter the likelihood through $\boldsymbol{\mu}^{\mathrm{intron}}_{i}$ and $\boldsymbol{\pi}_{i}$.
 		\item The prediction of $\boldsymbol{\pi}_i$ \eqref{eq:pred_pi} is the fraction of intronic reads originating from nascent introns, as defined in \eqref{eq:pi_counts}. Dividing through by $\boldsymbol{\mu}^{\mathrm{nascent}}_{i}$ gives the equivalent form $\boldsymbol{\pi}_i = \sigma \left( c^{\pi}_{i} + \boldsymbol{X} (\boldsymbol{\gamma}_i - \boldsymbol{\beta}_i) \right)$, where $\sigma(x) = \exp(x) / (1 + \exp(x))$ is the sigmoid function.
-		\item The intercept $c^{\pi}_{i}$ therefore collects everything that shifts the coverage shape of the intron $i$ but does not change between the conditions, namely $\log ( L_{\mathrm{intron},i} / 2 )$ and the ratio $k_{\mathrm{splice},i} / k_{\mathrm{elong},i}$ in the reference condition, following \eqref{eq:pi_rates}. The intron lengths are for this reason not needed as an input of our model.
+		\item The intercept $c^{\pi}_{i}$ therefore absorbs all factors that shift the coverage shape of the intron $i$ but do not change between the conditions. Following \eqref{eq:pi_rates}, it equals $\log ( L_{\mathrm{intron},i} / 2 ) + \log ( k_{\mathrm{splice},i} / k_{\mathrm{elong},i} )$, with the rates taken in the reference condition. The intron lengths are for this reason not needed as an input of our model.
 	\end{itemize}
+
+	\subsection{Model Likelihood} \label{subsec:likelihood}	
+	
+
+	We will now describe the likelihood function of our model. The likelihood relates the quantities predicted in the section \nameref{subsec:model_param} to the data observed in an experiment, and consists of one term for each of the predicted quantities.
+
+	The observed data consist of the exonic and intronic read counts, and of the distribution of the intronic reads along the intron. The exonic and intronic reads are disjoint sets, that is, no individual read is counted as both exonic and intronic. To describe the distribution of the reads along an intron, we divide each intron into $b$ bins of equal width, and express the positions relative to the intron length, on the interval $[0,1]$.
+
+	The model is fitted to the following observed data:
+	\begin{itemize}
+		\item The exon read counts $\boldsymbol{y}^{\mathrm{exon}} \in \mathbb{N}_0^{n}$. The reads are aggregated over all exons of the gene, for example by aligning them to a reference transcriptome.
+		\item The intron read counts $\boldsymbol{y}^{\mathrm{intron}}_{i} \in \mathbb{N}_0^{n}$ for each intron $i$.
+		\item The intron coverage $\boldsymbol{Y}^{\mathrm{cov}}_{i} \in \mathbb{N}_0^{n \times b}$ for each intron $i$, holding the number of reads falling into each bin, for every sample.
+	\end{itemize}
+	The read counts are vectors holding one value per sample, and correspond to the predictions \eqref{eq:pred_mu_exon} and \eqref{eq:pred_mu_intron}. The coverage is a matrix, holding one row per sample and one column per bin, and corresponds to the prediction \eqref{eq:pred_pi}.
+
+	Every intronic read falls into exactly one bin of its intron, so the row sums of the coverage are the intron read counts,
+	\begin{equation} \label{eq:coverage_row_sums}
+		\boldsymbol{y}^{\mathrm{intron}}_{i} = \boldsymbol{Y}^{\mathrm{cov}}_{i} \boldsymbol{1}
+	\end{equation}
+	where $\boldsymbol{1} \in \mathbb{R}^{b}$ is a vector of ones. The intron read counts and the intron coverage are therefore not two independent observations, and we will treat the coverage as the distribution of the reads within the intron, conditional on their total number.
+
+	The exonic and intronic reads, on the other hand, are disjoint by construction, and we likewise require the introns not to overlap each other. Their read counts are therefore independent, and their contributions to the likelihood may be added.
+
+% TODO (next): bin centers $x_j$; rescaling of \eqref{eq:p_unspliced} and \eqref{eq:p_nascent}
+% to relative coordinates, giving $p_i(x) = 1 + \pi_i (1 - 2x)$; then the three likelihood terms.
+% ============================================================================
+	
+
+
+	
 	
 	
 	
@@ -399,7 +428,7 @@
 
     \section{Results}
     I will apply the model on some data, e.g. ENCODE datasets of stem cell differentiation, or degron mediated protein KD. Will plot and describe the results here. Should mainly serve for illustration, maybe e.g. mutations known to influence elongation speed (Drosophilla and C. Elegans data, maybe human cell lines if data are available).
-
+ 
 
     \section{Discussion}
     Discuss stuff here.
