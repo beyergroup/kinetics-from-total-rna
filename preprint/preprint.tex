@@ -343,9 +343,9 @@
 	\end{subequations}
 	Reversing the order of the rates in a ratio flips the sign of its LFC. All six ratio LFCs are therefore determined by $\boldsymbol{\alpha}$, $\boldsymbol{\beta}_i$ and $\boldsymbol{\gamma}_i$.
 
-	This parametrization corresponds directly to the steady state solution of the section \nameref{subsec:steady_state}. The mature transcript pool \eqref{eq:t_mat_ss} changes by $\mathrm{LFC}(T_{\mathrm{mature}}) = \boldsymbol{\alpha}$, which is the quantity reported by a standard differential expression analysis; the nascent pool of the intron $i$ \eqref{eq:i_nas_ss} changes by $\boldsymbol{\alpha} - \boldsymbol{\beta}_i$, and its unspliced pool \eqref{eq:i_unspliced_ss} by $\boldsymbol{\alpha} - \boldsymbol{\gamma}_i$, following \eqref{eq:lfc_init_over_elong} and \eqref{eq:lfc_init_over_splice}. The remaining combination $\boldsymbol{\beta}_i - \boldsymbol{\gamma}_i$ \eqref{eq:lfc_elong_over_splice} is the LFC of the ratio $k_{\mathrm{elong},i} / k_{\mathrm{splice},i}$, which determines the coverage shape of the intron $i$ through \eqref{eq:pi_rates}.
+	This parametrization corresponds directly to the steady state solution derived in the section \nameref{subsec:steady_state}. The mature transcript pool \eqref{eq:t_mat_ss} changes by $\mathrm{LFC}(T_{\mathrm{mature}}) = \boldsymbol{\alpha}$, which is the quantity reported by a standard differential expression analysis; the nascent pool of the intron $i$ \eqref{eq:i_nas_ss} changes by $\boldsymbol{\alpha} - \boldsymbol{\beta}_i$, and its unspliced pool \eqref{eq:i_unspliced_ss} by $\boldsymbol{\alpha} - \boldsymbol{\gamma}_i$, following \eqref{eq:lfc_init_over_elong} and \eqref{eq:lfc_init_over_splice}. The remaining combination $\boldsymbol{\beta}_i - \boldsymbol{\gamma}_i$ \eqref{eq:lfc_elong_over_splice} is the LFC of the ratio $k_{\mathrm{elong},i} / k_{\mathrm{splice},i}$, which determines the coverage shape of the intron $i$ through \eqref{eq:pi_rates}.
 	
-	The model predicts several quantities, which give rise to the likelihood function, defined in the section \nameref{subsec:likelihood}. The likelihood function is then used for parameter estimation and statistical inference, as described below. Each of the predicted quantities is a vector in $\mathbb{R}^{n}$, holding one value per sample:
+	The model predicts several quantities, which give rise to the likelihood function described in the section \nameref{subsec:likelihood}. Each of the predicted quantities is a vector in $\mathbb{R}^{n}$, holding one value per sample:
 	\begin{itemize}
 		\item The number of exonic reads $\boldsymbol{\mu}^{\mathrm{exon}}$.
 		\item The number of intronic reads $\boldsymbol{\mu}^{\mathrm{intron}}_i$ for each intron $i$.
@@ -394,7 +394,7 @@
 	\subsection{Model Likelihood} \label{subsec:likelihood}	
 	
 
-	We will now describe the likelihood function of our model. The likelihood relates the quantities predicted in the section \nameref{subsec:model_param} to the data observed in an experiment, and consists of one term for each of the predicted quantities.
+	We will now describe the likelihood function of our model, used for parameter estimation by maximum likelihood and as the basis of the statistical tests. It has one term for each of the quantities predicted in the section \nameref{subsec:model_param}: the exonic reads, the intronic reads, and the shape of the intron coverage.
 
 	The observed data consist of the exonic and intronic read counts, and of the distribution of the intronic reads along the intron. The exonic and intronic reads are disjoint sets, that is, no individual read is counted as both exonic and intronic. To describe the distribution of the reads along an intron, we divide each intron into $b$ bins of equal width, and express the positions relative to the intron length, on the interval $[0,1]$.
 
@@ -402,17 +402,31 @@
 	\begin{itemize}
 		\item The exon read counts $\boldsymbol{y}^{\mathrm{exon}} \in \mathbb{N}_0^{n}$. The reads are aggregated over all exons of the gene, for example by aligning them to a reference transcriptome.
 		\item The intron read counts $\boldsymbol{y}^{\mathrm{intron}}_{i} \in \mathbb{N}_0^{n}$ for each intron $i$.
-		\item The intron coverage $\boldsymbol{Y}^{\mathrm{cov}}_{i} \in \mathbb{N}_0^{n \times b}$ for each intron $i$, holding the number of reads falling into each bin, for every sample.
+		\item The intron coverage $\boldsymbol{Y}^{\mathrm{cov}}_{i} \in \mathbb{R}^{n \times b}$ for each intron $i$, holding the number of reads falling into each bin, for every sample.
 	\end{itemize}
 	The read counts are vectors holding one value per sample, and correspond to the predictions \eqref{eq:pred_mu_exon} and \eqref{eq:pred_mu_intron}. The coverage is a matrix, holding one row per sample and one column per bin, and corresponds to the prediction \eqref{eq:pred_pi}.
 
-	Every intronic read falls into exactly one bin of its intron, so the row sums of the coverage are the intron read counts,
+	We treat every read as a single point on its intron, and do not model the shape of its alignment. An alignment spans a region of the genome, and need not even be contiguous, for example when the mates of a read pair are separated by a gap. The introns are typically long compared to the reads, so we consider this a minor simplification; our implementation rescales the per-base coverage of the intron into $b = 100$ bins. Other values may be used as well: setting $b$ to the length of the intron gives one bin per base, so the unbinned coverage is a special case of the description above.
+
+	The coverage of each sample sums to the read count of its intron,
 	\begin{equation} \label{eq:coverage_row_sums}
 		\boldsymbol{y}^{\mathrm{intron}}_{i} = \boldsymbol{Y}^{\mathrm{cov}}_{i} \boldsymbol{1}
 	\end{equation}
-	where $\boldsymbol{1} \in \mathbb{R}^{b}$ is a vector of ones. The intron read counts and the intron coverage are therefore not two independent observations, and we will treat the coverage as the distribution of the reads within the intron, conditional on their total number.
+	where $\boldsymbol{1} \in \mathbb{R}^{b}$ is a vector of ones. The intron read counts and the intron coverage are therefore not two independent observations: the counts are determined by the coverage. We will factor the likelihood of the intron $i$ as
+	\begin{equation} \label{eq:intron_factorization}
+		P(\boldsymbol{Y}^{\mathrm{cov}}_{i}) = P(\boldsymbol{y}^{\mathrm{intron}}_{i}) \, P(\boldsymbol{Y}^{\mathrm{cov}}_{i} \mid \boldsymbol{y}^{\mathrm{intron}}_{i})
+	\end{equation}
+	where the first factor describes the number of the intronic reads, and the second one their positions within the intron.
 
-	The exonic and intronic reads, on the other hand, are disjoint by construction, and we likewise require the introns not to overlap each other. Their read counts are therefore independent, and their contributions to the likelihood may be added.
+% TODO (supplement): how reads are reduced to points in practice - per-base coverage binned and
+% rescaled to the read count, keeping \eqref{eq:coverage_row_sums} exact; alternatives such as
+% the alignment midpoint.
+
+	The exonic and intronic reads, on the other hand, are disjoint by construction. We therefore treat the exonic count and the counts of the individual introns as independent observations, so that the likelihood of a gene with $m$ introns factorizes, using \eqref{eq:intron_factorization}, as
+	\begin{equation} \label{eq:likelihood_factorization}
+		P \left( \boldsymbol{y}^{\mathrm{exon}}, \boldsymbol{Y}^{\mathrm{cov}}_{1}, \dots, \boldsymbol{Y}^{\mathrm{cov}}_{m} \right) = P(\boldsymbol{y}^{\mathrm{exon}}) \prod_{i=1}^{m} P(\boldsymbol{y}^{\mathrm{intron}}_{i}) \, P(\boldsymbol{Y}^{\mathrm{cov}}_{i} \mid \boldsymbol{y}^{\mathrm{intron}}_{i})
+	\end{equation}
+	The three kinds of factors give the three terms of the log-likelihood, which we describe next.
 
 % TODO (next): bin centers $x_j$; rescaling of \eqref{eq:p_unspliced} and \eqref{eq:p_nascent}
 % to relative coordinates, giving $p_i(x) = 1 + \pi_i (1 - 2x)$; then the three likelihood terms.
