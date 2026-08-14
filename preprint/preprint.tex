@@ -244,7 +244,7 @@
     \section{Inference Model} \label{inference_model}
     Here we describe our inference model, working with total RNA-seq data. As shown in the section \nameref{subsec:structural_nonidef}, the individual kinetic rates are not identifiable from steady state observations, and only their ratios can be estimated. Our inference model focuses on comparing biological conditions, and estimates LFCs of these ratios between the conditions. Throughout this section we assume the system is at steady state, and, unless stated otherwise, we retain the modeling assumptions introduced in the section \nameref{dynamical_model}.
     
-    \subsection{Distinguishing Nascent and Unspliced Introns by Read Coverage}
+    \subsection{Distinguishing Nascent and Unspliced Introns by Read Coverage} \label{subsec:coverage_shape}
     
     We will start by discussing the key component of our model: the fact that nascent introns $I_{\mathrm{nascent}}$ and unspliced introns $I_{\mathrm{unspliced}}$ produce different read coverage patterns, which allows us to distinguish them, and consequently identify the ratio $k_\mathrm{elong} / k_\mathrm{splice}$ from the data. This core principle was first observed by \citet{ameurTotalRNASequencing2011}, and subsequently utilized in the work of others \citep{jonkersGenomewideDynamicsPol2014, graySnapShotSeqMethodExtracting2014, kawamuraStatisticalInferenceRate2019, debesAgeingassociatedChangesTranscriptional2023}.
     
@@ -394,7 +394,7 @@
 	\subsection{Model Likelihood} \label{subsec:likelihood}	
 	
 
-	We will now describe the likelihood function of our model, used for parameter estimation by maximum likelihood and as the basis of the statistical tests. It has one term for each of the quantities predicted in the section \nameref{subsec:model_param}: the exonic reads, the intronic reads, and the shape of the intron coverage.
+	We will now describe the likelihood function of our model, which we use for parameter estimation by the maximum likelihood method, and as the basis of the statistical tests. It has one term for each of the quantities predicted in the section \nameref{subsec:model_param}: the exonic reads, the intronic reads, and the shape of the intron coverage.
 
 	The observed data consist of the exonic and intronic read counts, and of the distribution of the intronic reads along the intron. The exonic and intronic reads are disjoint sets, that is, no individual read is counted as both exonic and intronic. To describe the distribution of the reads along an intron, we divide each intron into $b$ bins of equal width, and express the positions relative to the intron length, on the interval $[0,1]$.
 
@@ -406,7 +406,7 @@
 	\end{itemize}
 	The read counts are vectors holding one value per sample, and correspond to the predictions \eqref{eq:pred_mu_exon} and \eqref{eq:pred_mu_intron}. The coverage is a matrix, holding one row per sample and one column per bin, and corresponds to the prediction \eqref{eq:pred_pi}.
 
-	We treat every read as a single point on its intron, and do not model the shape of its alignment. An alignment spans a region of the genome, and need not even be contiguous, for example when the mates of a read pair are separated by a gap. The introns are typically long compared to the reads, so we consider this a minor simplification; our implementation rescales the per-base coverage of the intron into $b = 100$ bins. Other values may be used as well: setting $b$ to the length of the intron gives one bin per base, so the unbinned coverage is a special case of the description above.
+	We treat every read as a single point on its intron, and do not model the shape of its alignment. An alignment spans a region of the genome, and need not even be contiguous, for example when the mates of a read pair are separated by a gap. The introns are typically long compared to the reads, so we consider this a minor simplification; our implementation rescales the per-base coverage of the intron into $b = 100$ bins. Other values may be used as well: setting $b$ to the length of the intron, separately for each intron, gives one bin per base, so the unbinned coverage is a special case of the description above.
 
 	The coverage of each sample sums to the read count of its intron,
 	\begin{equation} \label{eq:coverage_row_sums}
@@ -428,9 +428,44 @@
 	\end{equation}
 	The three kinds of factors give the three terms of the log-likelihood, which we describe next.
 
-% TODO (next): bin centers $x_j$; rescaling of \eqref{eq:p_unspliced} and \eqref{eq:p_nascent}
-% to relative coordinates, giving $p_i(x) = 1 + \pi_i (1 - 2x)$; then the three likelihood terms.
-% ============================================================================
+	We index the samples by $s = 1, \dots, n$ and the coverage bins by $j = 1, \dots, b$, keeping the index $i = 1, \dots, m$ of the introns. We write $y^{\mathrm{exon}}_{s}$ for the element of $\boldsymbol{y}^{\mathrm{exon}}$ belonging to the sample $s$, and use the same convention for the other observed and predicted quantities, so that $Y^{\mathrm{cov}}_{i,s,j}$ is the number of reads of the sample $s$ falling into the bin $j$ of the intron $i$.
+
+	We model the read counts as Poisson distributed, with the means given by the predictions \eqref{eq:pred_mu_exon} and \eqref{eq:pred_mu_intron},
+	\begin{subequations}
+		\begin{align}
+			y^{\mathrm{exon}}_{s} &\sim \mathrm{Poisson} \left( \mu^{\mathrm{exon}}_{s} \right) \label{eq:poisson_exon}\\
+			y^{\mathrm{intron}}_{i,s} &\sim \mathrm{Poisson} \left( \mu^{\mathrm{intron}}_{i,s} \right) \label{eq:poisson_intron}
+		\end{align}
+	\end{subequations}
+	independently over the samples, and, within a sample, independently over the exonic counts and the counts of the individual introns.
+
+	The first two factors of \eqref{eq:likelihood_factorization} therefore give the standard Poisson log-likelihood, summed over the samples and, in the case of the introns, over the introns of the gene. We denote these two terms by $\mathcal{L}^{\mathrm{exon}}$ and $\mathcal{L}^{\mathrm{intron}}$. The third term, describing the positions of the intronic reads, is derived below.
+
+	In the section \nameref{subsec:coverage_shape}, we described the read locations by a coordinate $x \in [0, L_{\mathrm{intron}}]$, measured from the start of the intron. We now express the locations relative to the intron length, so that $x \in [0,1]$ holds for every intron, with $x = 0$ at its start and $x = 1$ at its end. We denote by $x_j$ the center of the bin $j$, and take it as the location of all reads falling into that bin.
+
+	Expressing the positions relative to the intron length amounts to setting $L_{\mathrm{intron},i} = 1$ in the densities \eqref{eq:p_unspliced} and \eqref{eq:p_nascent}. The mixture \eqref{eq:mixture} of the intron $i$ in the sample $s$ is therefore
+	\begin{equation} \label{eq:mixture_relative}
+		p_{i,s}(x) = \pi_{i,s} \cdot 2 (1 - x) + (1 - \pi_{i,s}) = 1 + \pi_{i,s} (1 - 2x)
+	\end{equation}
+	The intron length cancels out, which is the same observation we made about the intercept $c^{\pi}_{i}$ in the section \nameref{subsec:model_param}: the intron lengths are not needed as an input of our model.
+
+	The binning of the intron amounts to a rounding of the read locations, as we treat every read falling into the bin $j$ as located at its center $x_j$. Conditionally on the number of the intronic reads, the numbers of reads in the individual bins then follow a multinomial distribution, whose probabilities are obtained by evaluating the density \eqref{eq:mixture_relative} at the bin centers and normalizing,
+	\begin{equation} \label{eq:bin_probability}
+		p^{\mathrm{bin}}_{i,s,j} = \frac{p_{i,s}(x_j)}{\sum_{k=1}^{b} p_{i,s}(x_k)} = \frac{1}{b} \left( 1 + \pi_{i,s} (1 - 2 x_j) \right)
+	\end{equation}
+	The second equality follows from the bin centers being symmetric around $1/2$, so that $\sum_{k} (1 - 2 x_k) = 0$.
+
+	The third term of the log-likelihood is then
+	\begin{equation} \label{eq:loglik_cov}
+		\mathcal{L}^{\mathrm{cov}} = \sum_{i=1}^{m} \sum_{s=1}^{n} \sum_{j=1}^{b} Y^{\mathrm{cov}}_{i,s,j} \log \left( 1 + \pi_{i,s} (1 - 2 x_j) \right)
+	\end{equation}
+	where we dropped the multinomial coefficients and the normalizing factor $1/b$ of \eqref{eq:bin_probability}, which are just additive constants of the log-likelihood.
+
+	The log-likelihood of the gene is the sum of the three terms,
+	\begin{equation} \label{eq:loglik_total}
+		\mathcal{L} = \mathcal{L}^{\mathrm{exon}} + \mathcal{L}^{\mathrm{intron}} + \mathcal{L}^{\mathrm{cov}}
+	\end{equation}
+	which we use for the parameter estimation and the statistical inference, as described below.
 	
 
 
@@ -446,6 +481,13 @@
 
     \section{Discussion}
     Discuss stuff here.
+
+% TODO (Poisson vs. negative binomial): we model the counts as Poisson, not negative binomial.
+% Points to make here rather than in the methods:
+%   - alpha is a nuisance parameter in our model; readers interested in the LFC of expression
+%     itself should use DESeq2 or a similar tool, which models the overdispersion.
+%   - the model could be extended to a negative binomial likelihood, but the estimation is already
+%     substantially complicated by the read positions, so we leave this for future work.
 
 
     \section*{Code availability}
