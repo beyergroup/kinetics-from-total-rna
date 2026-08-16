@@ -467,6 +467,26 @@
 	\end{equation}
 	which we use for the parameter estimation and the statistical inference, as described below.
 	
+	\subsection{Estimation and Inference} \label{subsec:estimation_inference}
+	We estimate the parameters of our model by the maximum likelihood method, taking as the estimate the values of the parameters that maximize the log-likelihood \eqref{eq:loglik_total}. The estimated parameters are the LFCs $\boldsymbol{\alpha}$, $\boldsymbol{\beta}_i$ and $\boldsymbol{\gamma}_i$, and the intercepts $c^{\mathrm{exon}}$, $c^{\mathrm{intron}}_{i}$ and $c^{\pi}_{i}$. The parameters of primary interest are $\boldsymbol{\beta}_i$ and $\boldsymbol{\gamma}_i$. The intercepts are nuisance parameters, and $\boldsymbol{\alpha}$ is the change of the mature transcript pool, which is the quantity reported by a standard differential expression analysis.
+
+	The offset terms $\boldsymbol{\ell}$ and $\boldsymbol{L}^{\mathrm{tx}}$ are not estimated by our model. We obtain them in the same way as a standard differential expression pipeline does, the library sizes by the median of ratios method \citep{andersDifferentialExpressionAnalysis2010, loveModeratedEstimationFold2014}, and the average transcript lengths from a transcript level quantification of each sample \citep{sonesonDifferentialAnalysesRNAseq2016, patroSalmonProvidesFast2017}. Both are estimated before the model is fitted, and are held fixed during the fitting.
+
+	The log-likelihood \eqref{eq:loglik_total} has no maximum in a closed form, and we therefore maximize it numerically. It is differentiable in all model parameters, so both the gradients used by the optimizer and the second derivatives used for the Fisher information below are obtained by automatic differentiation \citep{anselPyTorch2Faster2024}. The log-likelihood is not concave, and the optimization is for this reason not guaranteed to reach the global maximum. The value attained by the optimizer enters not only the estimates themselves, but also the test statistics described below, as those are computed from the maximized log-likelihood.
+
+	\begin{itemize}
+		\item We fit parameters by MLE.
+		\item Loss is not convex, we use numerical method (L-BFGS in our implementation), but unfortunately without any guarantees (this may influence both estimated value and test statistics).
+		\item Separation of data problem, like in logistic regression. Will cite \cite{hauckWaldsTestApplied1977}. Probably should be introduced here, after MLE but before testing. 
+		\item  We may do Wald (cheap, just get loss Hessian), but due to separation of data, some params may not be identifiable. LRT circumvent this problem, and is therefore a default test in our implementation. QR on Hessian also produce identifiability flag.
+		
+		\item Also due to separation issue, we may use regularization (e.g., L2 regularization, a common/straightforward way to handle separation problem). So we use L2 (also it's simple / convenient). To get some priors (i.e. regularization strength), we pool estimates across genes and fit them via ashr method, using the weights from Wald (comment that this may have some shortcomings maybe, like the estimates are quite noisy in the first place; so we may get relatively weak regularization as a results, but this is probably ok.) Forward note that other way to pool the data, and thus regularize, is the global model described later. Brief note that we regularize everything on one fit, so no guarantee what will happen with params (e.g., some params may even grow in magnitute, as model tries to compensate for shrinkage of other params).
+		
+		
+	\end{itemize}
+	
+	\subsection{Model Variants} \label{subsec:model_variants}	
+	
 
 
 	
