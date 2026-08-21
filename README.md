@@ -24,12 +24,12 @@ the [rna_kinetics](rna_kinetics) folder
 > finished, please use this README as the description of what the code actually does.
 >
 > The current draft of the manuscript is included in this repository as
-> [preprint_draft_2026-07-31.pdf](preprint_draft_2026-07-31.pdf). Please note that the draft is not
-> finished, and its results and discussion sections are only placeholders. However, the section
-> *Dynamical Model of RNA Metabolism* is mostly complete; it describes the underlying physical model
-> of the RNA metabolism, its steady state solution, and the structural non-identifiability discussed
-> below. We therefore recommend reading this section if you want to understand what the pipeline is
-> fitting.
+> [preprint_draft_2026-08-21.pdf](preprint_draft_2026-08-21.pdf). Please note that the draft is not
+> finished, and several of its sections are only placeholders. However, the sections
+> *Dynamical Model of RNA Metabolism* and *Inference Model* are mostly complete; they describe the
+> underlying physical model of the RNA metabolism, and the inference model implemented in this
+> repository. We therefore recommend reading these sections if you want to understand what the
+> pipeline is fitting.
 
 ## What the model estimates
 
