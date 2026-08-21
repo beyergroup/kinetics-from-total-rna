@@ -236,15 +236,15 @@
     \end{equation}
     The steady states of the system are defined as the points where $f(\boldsymbol{x}) = 0$; therefore, steady-state observations cannot distinguish the dynamics $f(\boldsymbol{x})$ from $c \cdot f(\boldsymbol{x})$. In a model of metabolism, $c \cdot f(\boldsymbol{x})$ describes a system in which all reactions proceed $c$ times faster than in the system with dynamics $f(\boldsymbol{x})$; both systems share the same steady states, and thus cannot be told apart from steady-state data alone. Because scaling all rates by a common factor leaves the observations unchanged, any identifiable quantity must be unchanged by such scaling, which is exactly the case for ratios of rates.
 
-    Because only ratios of rates are identifiable, comparing biological conditions can reveal changes only in these ratios. As the logarithm of a ratio is a difference of logarithms, the log-fold-change (LFC) of a rate ratio equals the difference of the individual rate LFCs, for example $\mathrm{LFC}(k_{\mathrm{elong}} / k_{\mathrm{deg}}) = \mathrm{LFC}(k_{\mathrm{elong}}) - \mathrm{LFC}(k_{\mathrm{deg}})$. Such differences of LFCs are therefore the quantities that our inference model estimates.
+    Because only ratios of rates are identifiable, comparing biological conditions can reveal changes only in these ratios. As the logarithm of a ratio is a difference of logarithms, the log fold change (LFC) of a rate ratio equals the difference of the individual rate LFCs, for example $\mathrm{LFC}(k_{\mathrm{elong}} / k_{\mathrm{deg}}) = \mathrm{LFC}(k_{\mathrm{elong}}) - \mathrm{LFC}(k_{\mathrm{deg}})$. Such differences of LFCs are therefore the quantities that our inference model estimates.
 
-    Finally, we note that the compositional nature of RNA-seq data introduces a second, independent source of non-identifiability. We address it, and describe the resulting estimable quantities in full, in the section \nameref{inference_model}.
+    Finally, we note that the compositional nature of RNA-seq data introduces a second, independent source of non-identifiability. We describe it, and which of the estimated quantities it affects, in the section \nameref{subsec:compositional_nonidef}.
 
 
     \section{Inference Model} \label{inference_model}
     Here we describe our inference model, working with total RNA-seq data. As shown in the section \nameref{subsec:structural_nonidef}, the individual kinetic rates are not identifiable from steady state observations, and only their ratios can be estimated. Our inference model focuses on comparing biological conditions, and estimates LFCs of these ratios between the conditions. Throughout this section we assume the system is at steady state, and, unless stated otherwise, we retain the modeling assumptions introduced in the section \nameref{dynamical_model}.
     
-    \subsection{Distinguishing Nascent and Unspliced Introns by Read Coverage}
+    \subsection{Distinguishing Nascent and Unspliced Introns by Read Coverage} \label{subsec:coverage_shape}
     
     We will start by discussing the key component of our model: the fact that nascent introns $I_{\mathrm{nascent}}$ and unspliced introns $I_{\mathrm{unspliced}}$ produce different read coverage patterns, which allows us to distinguish them, and consequently identify the ratio $k_\mathrm{elong} / k_\mathrm{splice}$ from the data. This core principle was first observed by \citet{ameurTotalRNASequencing2011}, and subsequently utilized in the work of others \citep{jonkersGenomewideDynamicsPol2014, graySnapShotSeqMethodExtracting2014, kawamuraStatisticalInferenceRate2019, debesAgeingassociatedChangesTranscriptional2023}.
     
@@ -313,47 +313,236 @@
 	
 	Finally, read coverage is also affected by technical factors, such as read mappability or GC content \citep{derrienFastComputationApplications2012, loveModelingRNAseqFragment2016}. The observed coverage is therefore distorted in a sequence-dependent manner, so that the location distributions derived above are only approximate. As such distortions are determined by the underlying sequence, they affect all samples in the same way; we discuss their impact on our estimates in the section \nameref{supplementary_methods}.
 	
-	\subsection{Model parametrization}
-	We will now describe parametrization of our model. The goal of our inference task is to estimate the changes in ratios of kinetic rates between biological conditions. The model is fitted on total RNA-seq data using maximum likelihood estimation, as described below. 
+	\subsection{Model Parametrization} \label{subsec:model_param}	
+	We will now describe parametrization of our model. The goal of our inference task is to estimate the changes in ratios of kinetic rates between biological conditions. The model is fitted on total RNA-seq data using maximum likelihood estimation, as described below. Throughout the paper, we write vectors and matrices in bold, and scalars in plain type.
 	
-	We assume a dataset consisting of $n$ samples. The samples are annotated by a design matrix $X \in \mathbb{R}^{n \times q}$, where $q$ is the number of features. The intercept column is not supposed to be a part of the design matrix, as our model handles intercept terms as explicit parameters.
+	We assume a dataset consisting of $n$ samples. The samples are annotated by a design matrix $\boldsymbol{X} \in \mathbb{R}^{n \times q}$, where $q$ is the number of features. The features may be, for example, indicator columns of categorical annotations, or continuous variables. The intercept column is not supposed to be a part of the design matrix, as our model handles intercept terms as explicit parameters. The intercept terms therefore correspond to the reference condition, that is, to samples whose row of $\boldsymbol{X}$ is zero.
 
 	We will now describe a model fitted on a specific gene, with $m \geq 1$ introns. We will discuss variants of this model, including one fitted on data from multiple genes jointly later on.
 
-	Our inference model relaxes one assumption of the section \nameref{dynamical_model}: we require the elongation speed to be constant only within each intron, and denote by $k_{\mathrm{elong},i}$ the elongation speed over the intron $i$. The polymerase density then remains constant within each intron, equal to $k_{\mathrm{init}} / k_{\mathrm{elong},i}$, so the results \eqref{eq:i_nas_ss}, \eqref{eq:p_nascent} and \eqref{eq:pi_rates} hold as derived, with $k_{\mathrm{elong}}$ replaced by $k_{\mathrm{elong},i}$.
+	Our inference model relaxes one assumption of the section \nameref{dynamical_model}: we require the elongation speed to be constant only within each intron, and denote by $k_{\mathrm{elong},i}$ the elongation speed over the intron $i$. The polymerase density then remains constant within each intron, equal to $k_{\mathrm{init}} / k_{\mathrm{elong},i}$, so the results \eqref{eq:i_nas_ss}, \eqref{eq:pi_rates} and \eqref{eq:p_nascent} hold as derived, with $k_{\mathrm{elong}}$ replaced by $k_{\mathrm{elong},i}$. The splicing speed may differ between the introns of a gene, as assumed in the section \nameref{dynamical_model}, and we denote by $k_{\mathrm{splice},i}$ the splicing speed of the intron $i$. We likewise denote by $L_{\mathrm{intron},i}$ the length of the intron $i$.
 
 	Our dynamical model has four kinetic rates, and as described in the section \nameref{subsec:structural_nonidef} above, only ratios of these rates are identifiable. There are $\binom{4}{2} = 6$ unordered pairs of
-	rates, and thus six such ratios up to inversion. The corresponding six LFCs are, however, not independent of
-	each other, as they span a space of dimensionality $3$: each of them is a difference of two of the four individual rate LFCs, and such differences span a three-dimensional space, since the four individual LFCs are determined only up to a common additive shift, which is exactly the scaling invariance \eqref{eq:scaling_invariance}. That is, our inference model needs to parametrize only three of them, with the remaining three LFCs following as their linear combinations.
-
-	The choice of which three ratios to parametrize is a matter of convention: any other choice of three independent ratios is a linear reparametrization of the same three-dimensional space. We parametrize the three ratios that share $k_{\mathrm{deg}}$ as their denominator, and denote
-	their LFCs as
+	rates, and thus six such ratios up to inversion. However, their LFCs span only a three-dimensional space, and our model thus parametrizes only three of them. The choice of which LFCs to parametrize is only a matter of convention; we choose the three ratios that share $k_{\mathrm{deg}}$ as their denominator. We write each LFC as a vector of coefficients with respect to the design matrix, so that $\mathrm{LFC}(\cdot) \in \mathbb{R}^{q}$, and the LFC in the individual samples is obtained as $\boldsymbol{X} \, \mathrm{LFC}(\cdot) \in \mathbb{R}^{n}$. We denote the three LFCs as
 	\begin{subequations}
 		\begin{align}
-			\alpha &= \mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{deg}}) \label{eq:alpha_def}\\
-			\beta &= \mathrm{LFC}(k_{\mathrm{elong}} / k_{\mathrm{deg}}) \label{eq:beta_def}\\
-			\gamma &= \mathrm{LFC}(k_{\mathrm{splice}} / k_{\mathrm{deg}}) \label{eq:gamma_def}
+			\boldsymbol{\alpha} &= \mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{deg}}) \label{eq:alpha_def}\\
+			\boldsymbol{\beta}_i &= \mathrm{LFC}(k_{\mathrm{elong},i} / k_{\mathrm{deg}}) \label{eq:beta_def}\\
+			\boldsymbol{\gamma}_i &= \mathrm{LFC}(k_{\mathrm{splice},i} / k_{\mathrm{deg}}) \label{eq:gamma_def}
 		\end{align}
 	\end{subequations}
-	The remaining three LFCs are obtained as their differences,
-	$\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{elong}}) = \alpha - \beta$,
-	$\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{splice}}) = \alpha - \gamma$ and
-	$\mathrm{LFC}(k_{\mathrm{elong}} / k_{\mathrm{splice}}) = \beta - \gamma$, and reversing the
-	order of the rates in a ratio flips the sign of its LFC.
+	The initiation and degradation rates are properties of the whole gene, giving us a single $\boldsymbol{\alpha}$, while the elongation and splicing speeds may differ between the introns, so we have one $\boldsymbol{\beta}_i$ and one $\boldsymbol{\gamma}_i$ for each of the $m$ introns. Each of these parameters is a vector in $\mathbb{R}^{q}$, holding one coefficient per feature of the design matrix.
 
-	This parametrization corresponds directly to the steady state solution of the section \nameref{subsec:steady_state}. The mature transcript pool \eqref{eq:t_mat_ss} changes by $\mathrm{LFC}(T_{\mathrm{mature}}) = \alpha$, which is the quantity reported by a standard differential expression analysis; the nascent intron pool \eqref{eq:i_nas_ss} changes by $\alpha - \beta$, and the unspliced intron pool \eqref{eq:i_unspliced_ss} by $\alpha - \gamma$. The remaining combination $\beta - \gamma$ is the LFC of the ratio $k_{\mathrm{elong}} / k_{\mathrm{splice}}$, which determines the intron coverage shape through \eqref{eq:pi_rates}.
+	The remaining three LFCs are obtained as their differences, for each intron $i$,
+	\begin{subequations}
+		\begin{align}
+			\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{elong},i}) &= \boldsymbol{\alpha} - \boldsymbol{\beta}_i \label{eq:lfc_init_over_elong}\\
+			\mathrm{LFC}(k_{\mathrm{init}} / k_{\mathrm{splice},i}) &= \boldsymbol{\alpha} - \boldsymbol{\gamma}_i \label{eq:lfc_init_over_splice}\\
+			\mathrm{LFC}(k_{\mathrm{elong},i} / k_{\mathrm{splice},i}) &= \boldsymbol{\beta}_i - \boldsymbol{\gamma}_i \label{eq:lfc_elong_over_splice}
+		\end{align}
+	\end{subequations}
+	Reversing the order of the rates in a ratio flips the sign of its LFC. All six ratio LFCs are therefore determined by $\boldsymbol{\alpha}$, $\boldsymbol{\beta}_i$ and $\boldsymbol{\gamma}_i$.
+
+	This parametrization corresponds directly to the steady state solution derived in the section \nameref{subsec:steady_state}. The mature transcript pool \eqref{eq:t_mat_ss} changes by $\mathrm{LFC}(T_{\mathrm{mature}}) = \boldsymbol{\alpha}$, which is the quantity reported by a standard differential expression analysis; the nascent pool of the intron $i$ \eqref{eq:i_nas_ss} changes by $\boldsymbol{\alpha} - \boldsymbol{\beta}_i$, and its unspliced pool \eqref{eq:i_unspliced_ss} by $\boldsymbol{\alpha} - \boldsymbol{\gamma}_i$, following \eqref{eq:lfc_init_over_elong} and \eqref{eq:lfc_init_over_splice}. The remaining combination $\boldsymbol{\beta}_i - \boldsymbol{\gamma}_i$ \eqref{eq:lfc_elong_over_splice} is the LFC of the ratio $k_{\mathrm{elong},i} / k_{\mathrm{splice},i}$, which determines the coverage shape of the intron $i$ through \eqref{eq:pi_rates}.
 	
+	The model predicts several quantities, which give rise to the likelihood function described in the section \nameref{subsec:likelihood}. Each of the predicted quantities is a vector in $\mathbb{R}^{n}$, holding one value per sample:
+	\begin{itemize}
+		\item The number of exonic reads $\boldsymbol{\mu}^{\mathrm{exon}}$.
+		\item The number of intronic reads $\boldsymbol{\mu}^{\mathrm{intron}}_i$ for each intron $i$.
+		\item The mixture coefficient $\boldsymbol{\pi}_i$ of the mixture \eqref{eq:mixture}, specifying the shape of the coverage of the intron $i$.
+	\end{itemize}
+
+	The predictions also utilize several nuisance parameters:
 	
+	\begin{itemize}
+		\item Intercept term for exon read count $c^{\mathrm{exon}}$.
+		\item Intercept term for intron read count $c^{\mathrm{intron}}_{i}$, specified for each intron $i$. 
+		\item Intercept term $c^{\pi}_{i}$ for each intron $i$, which will be used for prediction of the intron coverage parameter $\boldsymbol{\pi}_i$.
+	\end{itemize}
+
+	Beside these nuisance parameters, we also utilize the following offset terms, estimated independently of the model parameters. Both are vectors in $\mathbb{R}^{n}$, holding one value per sample:
+	\begin{itemize}
+		\item The library size $\boldsymbol{\ell}$, reflecting the sequencing depth. The same $\boldsymbol{\ell}$ is used for every gene.
+		\item The average transcript length $\boldsymbol{L}^{\mathrm{tx}}$, reflecting the effect of alternative exon splicing. It is estimated for each gene separately.
+	\end{itemize}
+
+	The model predictions are then:
+	\begin{tcolorbox}[
+		colback=white, colframe=black, boxrule=0.4pt, arc=1pt,
+		title=Model predictions, fonttitle=\bfseries\small,
+		coltitle=black, colbacktitle=white,
+		left=6pt, right=6pt, top=4pt, bottom=4pt,
+		]
+		\begin{subequations}
+		\begin{align}
+			\boldsymbol{\mu}^{\mathrm{exon}} &= \exp \left( \boldsymbol{X} \boldsymbol{\alpha} + c^{\mathrm{exon}} + \log \boldsymbol{\ell} + \log \boldsymbol{L}^{\mathrm{tx}} \right) \label{eq:pred_mu_exon}\\
+			\boldsymbol{\mu}^{\mathrm{nascent}}_{i} &= \exp \left( \boldsymbol{X} (\boldsymbol{\alpha} - \boldsymbol{\beta}_i) + c^{\mathrm{intron}}_{i} + c^{\pi}_{i} + \log \boldsymbol{\ell} \right) \label{eq:pred_mu_nascent}\\
+			\boldsymbol{\mu}^{\mathrm{unspliced}}_{i} &= \exp \left( \boldsymbol{X} (\boldsymbol{\alpha} - \boldsymbol{\gamma}_i) + c^{\mathrm{intron}}_{i} + \log \boldsymbol{\ell} \right) \label{eq:pred_mu_unspliced}\\
+			\boldsymbol{\mu}^{\mathrm{intron}}_{i} &= \boldsymbol{\mu}^{\mathrm{nascent}}_{i} + \boldsymbol{\mu}^{\mathrm{unspliced}}_{i} \label{eq:pred_mu_intron}\\
+			\boldsymbol{\pi}_{i} &= \boldsymbol{\mu}^{\mathrm{nascent}}_{i} / \boldsymbol{\mu}^{\mathrm{intron}}_{i} \label{eq:pred_pi}
+		\end{align}
+		\end{subequations}
+	\end{tcolorbox}
+	We will now comment on the model predictions described above.
+	\begin{itemize}
+		\item The division in \eqref{eq:pred_pi} is applied elementwise.
+		\item The predicted intronic reads are split into the two pools of the mixture \eqref{eq:mixture}: reads from nascent introns \eqref{eq:pred_mu_nascent}, and reads from unspliced introns \eqref{eq:pred_mu_unspliced}. Their changes between conditions are $\boldsymbol{\alpha} - \boldsymbol{\beta}_i$ and $\boldsymbol{\alpha} - \boldsymbol{\gamma}_i$, matching the steady state pools \eqref{eq:i_nas_ss} and \eqref{eq:i_unspliced_ss}. The two pools are only intermediate quantities, and enter the likelihood through $\boldsymbol{\mu}^{\mathrm{intron}}_{i}$ and $\boldsymbol{\pi}_{i}$.
+		\item The prediction of $\boldsymbol{\pi}_i$ \eqref{eq:pred_pi} is the fraction of intronic reads originating from nascent introns, as defined in \eqref{eq:pi_counts}. Dividing through by $\boldsymbol{\mu}^{\mathrm{nascent}}_{i}$ gives the equivalent form $\boldsymbol{\pi}_i = \sigma \left( c^{\pi}_{i} + \boldsymbol{X} (\boldsymbol{\gamma}_i - \boldsymbol{\beta}_i) \right)$, where $\sigma(x) = \exp(x) / (1 + \exp(x))$ is the sigmoid function.
+		\item The intercept $c^{\pi}_{i}$ therefore absorbs all factors that shift the coverage shape of the intron $i$ but do not change between the conditions. Following \eqref{eq:pi_rates}, it equals $\log ( L_{\mathrm{intron},i} / 2 ) + \log ( k_{\mathrm{splice},i} / k_{\mathrm{elong},i} )$, with the rates taken in the reference condition. The intron lengths are for this reason not needed as an input of our model.
+	\end{itemize}
+
+	\subsection{Model Likelihood} \label{subsec:likelihood}	
 	
+
+	We will now describe the likelihood function of our model, which we use for parameter estimation by the maximum likelihood method, and as the basis of the statistical tests. It has one term for each of the quantities predicted in the section \nameref{subsec:model_param}: the exonic reads, the intronic reads, and the shape of the intron coverage.
+
+	The observed data consist of the exonic and intronic read counts, and of the distribution of the intronic reads along the intron. The exonic and intronic reads are disjoint sets, that is, no individual read is counted as both exonic and intronic. To describe the distribution of the reads along an intron, we divide each intron into $b$ bins of equal width, and express the positions relative to the intron length, on the interval $[0,1]$.
+
+	The model is fitted to the following observed data:
+	\begin{itemize}
+		\item The exon read counts $\boldsymbol{y}^{\mathrm{exon}} \in \mathbb{N}_0^{n}$. The reads are aggregated over all exons of the gene, for example by aligning them to a reference transcriptome.
+		\item The intron read counts $\boldsymbol{y}^{\mathrm{intron}}_{i} \in \mathbb{N}_0^{n}$ for each intron $i$.
+		\item The intron coverage $\boldsymbol{Y}^{\mathrm{cov}}_{i} \in \mathbb{R}^{n \times b}$ for each intron $i$, holding the number of reads falling into each bin, for every sample.
+	\end{itemize}
+	The read counts are vectors holding one value per sample, and correspond to the predictions \eqref{eq:pred_mu_exon} and \eqref{eq:pred_mu_intron}. The coverage is a matrix, holding one row per sample and one column per bin, and corresponds to the prediction \eqref{eq:pred_pi}.
+
+	We treat every read as a single point on its intron, and do not model the shape of its alignment. An alignment spans a region of the genome, and need not even be contiguous, for example when the mates of a read pair are separated by a gap. The introns are typically long compared to the reads, so we consider this a minor simplification; our implementation rescales the per-base coverage of the intron into $b = 100$ bins. Other values may be used as well: setting $b$ to the length of the intron, separately for each intron, gives one bin per base, so the unbinned coverage is a special case of the description above.
+
+	The coverage of each sample sums to the read count of its intron,
+	\begin{equation} \label{eq:coverage_row_sums}
+		\boldsymbol{y}^{\mathrm{intron}}_{i} = \boldsymbol{Y}^{\mathrm{cov}}_{i} \boldsymbol{1}
+	\end{equation}
+	where $\boldsymbol{1} \in \mathbb{R}^{b}$ is a vector of ones. The intron read counts and the intron coverage are therefore not two independent observations: the counts are determined by the coverage. We will factor the likelihood of the intron $i$ as
+	\begin{equation} \label{eq:intron_factorization}
+		P(\boldsymbol{Y}^{\mathrm{cov}}_{i}) = P(\boldsymbol{y}^{\mathrm{intron}}_{i}) \, P(\boldsymbol{Y}^{\mathrm{cov}}_{i} \mid \boldsymbol{y}^{\mathrm{intron}}_{i})
+	\end{equation}
+	where the first factor describes the number of the intronic reads, and the second one their positions within the intron.
+
+% TODO (supplement): how reads are reduced to points in practice - per-base coverage binned and
+% rescaled to the read count, keeping \eqref{eq:coverage_row_sums} exact; alternatives such as
+% the alignment midpoint.
+
+	The exonic and intronic reads, on the other hand, are disjoint by construction. We therefore treat the exonic count and the counts of the individual introns as independent observations, so that the likelihood of a gene with $m$ introns factorizes, using \eqref{eq:intron_factorization}, as
+	\begin{equation} \label{eq:likelihood_factorization}
+		P \left( \boldsymbol{y}^{\mathrm{exon}}, \boldsymbol{Y}^{\mathrm{cov}}_{1}, \dots, \boldsymbol{Y}^{\mathrm{cov}}_{m} \right) = P(\boldsymbol{y}^{\mathrm{exon}}) \prod_{i=1}^{m} P(\boldsymbol{y}^{\mathrm{intron}}_{i}) \, P(\boldsymbol{Y}^{\mathrm{cov}}_{i} \mid \boldsymbol{y}^{\mathrm{intron}}_{i})
+	\end{equation}
+	The three kinds of factors give the three terms of the log-likelihood, which we describe next.
+
+	We index the samples by $s = 1, \dots, n$ and the coverage bins by $j = 1, \dots, b$, keeping the index $i = 1, \dots, m$ of the introns. We write $y^{\mathrm{exon}}_{s}$ for the element of $\boldsymbol{y}^{\mathrm{exon}}$ belonging to the sample $s$, and use the same convention for the other observed and predicted quantities, so that $Y^{\mathrm{cov}}_{i,s,j}$ is the number of reads of the sample $s$ falling into the bin $j$ of the intron $i$.
+
+	We model the read counts as Poisson distributed, with the means given by the predictions \eqref{eq:pred_mu_exon} and \eqref{eq:pred_mu_intron},
+	\begin{subequations}
+		\begin{align}
+			y^{\mathrm{exon}}_{s} &\sim \mathrm{Poisson} \left( \mu^{\mathrm{exon}}_{s} \right) \label{eq:poisson_exon}\\
+			y^{\mathrm{intron}}_{i,s} &\sim \mathrm{Poisson} \left( \mu^{\mathrm{intron}}_{i,s} \right) \label{eq:poisson_intron}
+		\end{align}
+	\end{subequations}
+	independently over the samples, and, within a sample, independently over the exonic counts and the counts of the individual introns.
+
+	The first two factors of \eqref{eq:likelihood_factorization} therefore give the standard Poisson log-likelihood, summed over the samples and, in the case of the introns, over the introns of the gene. We denote these two terms by $\mathcal{L}^{\mathrm{exon}}$ and $\mathcal{L}^{\mathrm{intron}}$. The third term, describing the positions of the intronic reads, is derived below.
+
+	In the section \nameref{subsec:coverage_shape}, we described the read locations by a coordinate $x \in [0, L_{\mathrm{intron}}]$, measured from the start of the intron. We now express the locations relative to the intron length, so that $x \in [0,1]$ holds for every intron, with $x = 0$ at its start and $x = 1$ at its end. We denote by $x_j$ the center of the bin $j$, and take it as the location of all reads falling into that bin.
+
+	Expressing the positions relative to the intron length amounts to setting $L_{\mathrm{intron},i} = 1$ in the densities \eqref{eq:p_unspliced} and \eqref{eq:p_nascent}. The mixture \eqref{eq:mixture} of the intron $i$ in the sample $s$ is therefore
+	\begin{equation} \label{eq:mixture_relative}
+		p_{i,s}(x) = \pi_{i,s} \cdot 2 (1 - x) + (1 - \pi_{i,s}) = 1 + \pi_{i,s} (1 - 2x)
+	\end{equation}
+	The intron length cancels out, which is the same observation we made about the intercept $c^{\pi}_{i}$ in the section \nameref{subsec:model_param}: the intron lengths are not needed as an input of our model.
+
+	The binning of the intron amounts to a rounding of the read locations, as we treat every read falling into the bin $j$ as located at its center $x_j$. Conditionally on the number of the intronic reads, the numbers of reads in the individual bins then follow a multinomial distribution, whose probabilities are obtained by evaluating the density \eqref{eq:mixture_relative} at the bin centers and normalizing,
+	\begin{equation} \label{eq:bin_probability}
+		p^{\mathrm{bin}}_{i,s,j} = \frac{p_{i,s}(x_j)}{\sum_{k=1}^{b} p_{i,s}(x_k)} = \frac{1}{b} \left( 1 + \pi_{i,s} (1 - 2 x_j) \right)
+	\end{equation}
+	The second equality follows from the bin centers being symmetric around $1/2$, so that $\sum_{k} (1 - 2 x_k) = 0$.
+
+	The third term of the log-likelihood is then
+	\begin{equation} \label{eq:loglik_cov}
+		\mathcal{L}^{\mathrm{cov}} = \sum_{i=1}^{m} \sum_{s=1}^{n} \sum_{j=1}^{b} Y^{\mathrm{cov}}_{i,s,j} \log \left( 1 + \pi_{i,s} (1 - 2 x_j) \right)
+	\end{equation}
+	where we dropped the multinomial coefficients and the normalizing factor $1/b$ of \eqref{eq:bin_probability}, which are just additive constants of the log-likelihood.
+
+	The log-likelihood of the gene is the sum of the three terms,
+	\begin{equation} \label{eq:loglik_total}
+		\mathcal{L} = \mathcal{L}^{\mathrm{exon}} + \mathcal{L}^{\mathrm{intron}} + \mathcal{L}^{\mathrm{cov}}
+	\end{equation}
+	which we use for the parameter estimation and the statistical inference, as described below.
 	
+	\subsection{Estimation and Inference} \label{subsec:estimation_inference}
+	We estimate the parameters of our model by the maximum likelihood method, taking as the estimate the values of the parameters that maximize the log-likelihood \eqref{eq:loglik_total}. The estimated parameters are the LFCs $\boldsymbol{\alpha}$, $\boldsymbol{\beta}_i$ and $\boldsymbol{\gamma}_i$, and the intercepts $c^{\mathrm{exon}}$, $c^{\mathrm{intron}}_{i}$ and $c^{\pi}_{i}$. The parameters of primary interest are $\boldsymbol{\beta}_i$ and $\boldsymbol{\gamma}_i$. The intercepts are nuisance parameters, and $\boldsymbol{\alpha}$ is the change of the mature transcript pool, which is the quantity reported by a standard differential expression analysis.
+
+	The offset terms $\boldsymbol{\ell}$ and $\boldsymbol{L}^{\mathrm{tx}}$ are not estimated by our model. We obtain them in the same way as a standard differential expression pipeline does, the library sizes by the median of ratios method \citep{andersDifferentialExpressionAnalysis2010, loveModeratedEstimationFold2014}, and the average transcript lengths from a transcript level quantification of each sample \citep{sonesonDifferentialAnalysesRNAseq2016, patroSalmonProvidesFast2017}. Both are estimated before the model is fitted, and are held fixed during the fitting.
+
+	The log-likelihood \eqref{eq:loglik_total} has no maximum in a closed form, and we therefore maximize it numerically. It is differentiable in all model parameters, so both the gradients used by the optimizer and the second derivatives used for the Fisher information matrix below are obtained by automatic differentiation \citep{anselPyTorch2Faster2024}. The log-likelihood is not concave, and the optimization is for this reason not guaranteed to reach the global maximum. A suboptimal solution affects not only the estimates, but also the test statistics described below.
+
+	The maximum of the log-likelihood also need not be attained at a finite value of the parameters. The coverage term \eqref{eq:loglik_cov} decomposes over the introns and the samples, and its contribution from a given intron and sample is a concave function of $\pi_{i,s}$ on the interval $[0,1]$, whose maximum may lie at one of the corners of that interval. The corner $\pi_{i,s} = 0$ is optimal when the observed coverage shows no bias towards the start of the intron, and the corner $\pi_{i,s} = 1$ when the coverage falls off at least as steeply as the nascent density $2(1-x)$. The mixture coefficient is obtained through the sigmoid function, $\boldsymbol{\pi}_i = \sigma ( c^{\pi}_{i} + \boldsymbol{X} (\boldsymbol{\gamma}_i - \boldsymbol{\beta}_i) )$, which is the equivalent form of the prediction \eqref{eq:pred_pi}, as we noted in the section \nameref{subsec:model_param}. A corner solution is therefore approached only as the argument of the sigmoid goes to $-\infty$ or $+\infty$, so the parameters entering it, that is $\boldsymbol{\beta}_i$, $\boldsymbol{\gamma}_i$ and $c^{\pi}_{i}$, may diverge. Whether they do is a property of the whole dataset rather than of a single sample: the samples share these parameters, and the design matrix constrains how $\boldsymbol{\pi}_i$ may differ between them, so a corner preferred by one sample may be ruled out by the coverage observed in the others. The other terms of the likelihood do not prevent the divergence, as the predicted counts \eqref{eq:pred_mu_intron} stay finite while $\boldsymbol{\pi}_i$ saturates.
+
+	When the divergence does occur, the log-likelihood is flat along the diverging direction. The parameter combination corresponding to such a direction is not identifiable, and the Fisher information matrix is rank deficient in that direction. Only that direction is affected, and the other parameters may still be estimated well; a fit may for example diverge in $c^{\pi}_{i}$ and $\boldsymbol{\beta}_i$ while $\boldsymbol{\gamma}_i$ stays well behaved. The optimizer stops at a large but finite value in practice, so the problem shows up as an ill-conditioned Fisher information matrix rather than an exactly singular one. A similar difficulty is known in logistic regression as the separation of data, where the maximum likelihood estimate does not exist whenever the linear predictor can separate the two classes perfectly \citep{albertExistenceMaximumLikelihood1984}.
+
+	The corner solutions do not arise only by chance, that is, from the sampling of the reads. Sequence-dependent technical biases may lead to them as well, for example when the GC content influences the number of reads produced per location. An incorrect annotation of the gene, such as an unannotated transcription start site within the intron, acts in the same way. The mixture \eqref{eq:mixture_relative} is then not a correct description of the read locations, and the observed coverage need not resemble any shape it can produce.
+
+	We may test the individual parameters of the model by the Wald test, which is inexpensive to compute, as it needs only the observed Fisher information matrix, that is, the matrix of the second derivatives of the negative log-likelihood at the estimate. Its inverse estimates the covariance matrix of the parameters, giving their standard errors, and each parameter is then tested against zero by comparing its estimate divided by the standard error to the standard normal distribution.
+
+	The Fisher information matrix is, however, not invertible when the log-likelihood is flat in some direction, so we do not invert it directly. We instead obtain its rank, and use a QR decomposition with column pivoting to select a subset of the parameters whose submatrix has full rank. The standard errors are computed from that submatrix, while the remaining parameters are reported as non-identifiable, without a standard error or a p-value. The pivoting therefore provides an identifiability flag of each parameter, which we report together with the estimates.
+
+	Moreover, the Wald test relies on a quadratic approximation of the log-likelihood near the estimate, which may be poor when the log-likelihood is skewed or nearly flat, and its results may then differ substantially from those of the likelihood ratio test described below \citep{hauckWaldsTestApplied1977}. Together with the fact that the Wald test leaves some of the parameters untested, this leads us to prefer the likelihood ratio test, which we use as the default test of our implementation. We nevertheless compute the Wald test as well, both for the identifiability flag, and for the standard errors, which we use when setting the strength of the regularization described below.
+
+	The likelihood ratio test compares the fitted model with a null model, obtained by imposing a linear restriction on its parameters. In our implementation, the restriction sets the tested LFC to zero, and we impose it by a reduced design matrix, obtained by removing the tested feature from the design matrix, so that the two models are nested. Both models are fitted by the procedure described above, and we denote their maximized log-likelihoods by $\mathcal{L}_{\mathrm{full}}$ and $\mathcal{L}_{\mathrm{reduced}}$. The test statistic
+	\begin{equation} \label{eq:lrt_statistic}
+		\Lambda = 2 \left( \mathcal{L}_{\mathrm{full}} - \mathcal{L}_{\mathrm{reduced}} \right)
+	\end{equation}
+	follows the $\chi^2$ distribution asymptotically under the null hypothesis, with the degrees of freedom given by the difference between the numbers of the free parameters of the two models. We obtain the p-value of the test from that distribution, and adjust the resulting p-values for multiple testing. The test statistic requires only the two maximized log-likelihoods, and not the Fisher information matrix, so the flat directions of the log-likelihood do not prevent us from computing it.
+
+	The flat directions of the log-likelihood may drive the estimates to extreme values, and a common remedy is to regularize the model, by penalizing large values of its parameters. We use an L2 regularization of the LFCs that these directions affect, and maximize
+	\begin{equation} \label{eq:regularized_loglik}
+		\mathcal{L}^{\mathrm{reg}} = \mathcal{L} - \sum_{i=1}^{m} \sum_{k=1}^{q} \left( \lambda^{\beta}_{k} \beta_{i,k}^{2} + \lambda^{\gamma}_{k} \gamma_{i,k}^{2} \right)
+	\end{equation}
+	where $\beta_{i,k}$ and $\gamma_{i,k}$ are the coefficients of $\boldsymbol{\beta}_i$ and $\boldsymbol{\gamma}_i$ belonging to the feature $k$ of the design matrix, and $\lambda^{\beta}_{k}$ and $\lambda^{\gamma}_{k}$ are the corresponding regularization strengths. Maximizing \eqref{eq:regularized_loglik} gives the maximum a posteriori estimate under a normal prior with mean zero and variance $\sigma^2 = 1 / (2 \lambda)$, placed on each of the regularized coefficients.
+
+	We set the strength of the regularization from the data, following the same principle as the shrinkage of the LFCs in a differential expression analysis \citep{loveModeratedEstimationFold2014}. We first fit every gene without the regularization, and collect the estimates of a given parameter and feature across all the genes, together with their standard errors from the Wald test. We fit a prior distribution to these estimates by the adaptive shrinkage method \citep{stephensFalseDiscoveryRates2016}, and take its standard deviation as $\sigma$, which gives the regularization strength $\lambda = 1 / (2 \sigma^2)$. Only the estimates that are identifiable and have a finite standard error enter this step. Each gene is then fitted again with the regularization. The regularization strengths are therefore shared by all the genes, while being specified separately for each parameter and each feature of the design matrix.
+
+	Of the parameters whose estimates may diverge, we regularize only $\boldsymbol{\beta}_i$ and $\boldsymbol{\gamma}_i$, and leave the intercept $c^{\pi}_{i}$ unregularized. Zero is a meaningful value to shrink the LFCs towards, as it corresponds to no change between the conditions, while $c^{\pi}_{i}$ describes the reference condition itself. The regularization changes the reported estimates, but not the p-values, which are obtained from the unregularized fit.
+
+	The parameters are fitted jointly, so all of them may move to compensate for the shrinkage, and even a regularized estimate may grow in magnitude as a result. The strength of the regularization depends on the standard errors of the Wald test, and inherits their limitations. The regularization also does not address the model misspecification discussed above, as it shrinks the estimates it produces in the same way as any other.
+
+	A different way of pooling the information across the genes is to fit a single LFC shared by all of them, which is done by the global model described in the section \nameref{subsec:model_variants}.
+		
+	\subsection{Model Variants} \label{subsec:model_variants}	
 	
+
+	The model described above is the intron-specific variant, with a separate $\boldsymbol{\beta}_i$ and $\boldsymbol{\gamma}_i$ for every intron of a gene. These parameters, together with the intercept $c^{\pi}_{i}$, belong to a single intron, and the reads of that intron are the only data specific to it. The statistical power of such an estimate is limited, and the estimate is also sensitive to technical biases affecting the coverage of that one intron. Sharing $\boldsymbol{\beta}_i$ and $\boldsymbol{\gamma}_i$ across several introns, or across several genes, reduces the influence of any single intron, at the price of the granularity of the results. The intercepts are never shared, as $c^{\pi}_{i}$ absorbs the length of the intron and the ratio of its kinetic rates in the reference condition, which differ from intron to intron. We therefore introduce several variants of the model, which differ in how much of the data shares a single $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$.
+
+	The gene-specific variant shares a single $\boldsymbol{\beta}$ and a single $\boldsymbol{\gamma}$ across all the introns of a gene. It is still fitted on one gene at a time, and the introns keep their own intercepts and their own terms of the log-likelihood. The estimation, the tests and the regularization proceed as described above.
+
+	The global variant of the model shares $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ across all the genes, which are then fitted jointly, so that one $\boldsymbol{\beta}$ and one $\boldsymbol{\gamma}$ describe the whole dataset. We do not regularize this variant, as its LFCs are single values, and there is therefore no collection of the estimates across the genes to fit a prior to. The remaining parameters, that is $\boldsymbol{\alpha}$ and the intercepts, stay specific to the individual genes and introns. The parameter $\boldsymbol{\alpha}$ contains the transcription initiation rate $k_{\mathrm{init}}$, for which a change shared by all the genes is not a plausible description of a biological system. A second and independent reason for not sharing $\boldsymbol{\alpha}$ is discussed in the section \nameref{subsec:compositional_nonidef}.
+
+	In the gene-specific and the global variant, the estimate is supported by more observations than in the intron-specific one, at the price of assuming that the LFC is common to all the introns or genes that share it. The global variant may also be fitted on a subset of the genes, for example the genes of a single chromosome, which narrows the set over which the LFC is assumed to be common.
+
+	A further variant simplifies the model itself, instead of sharing its parameters. As we noted in the section \nameref{subsec:model_param}, the coverage shape of an intron depends on the parameters only through the difference $\boldsymbol{\beta}_i - \boldsymbol{\gamma}_i$ \eqref{eq:lfc_elong_over_splice}, which is the LFC of the ratio $k_{\mathrm{elong},i} / k_{\mathrm{splice},i}$. We therefore also fit a model in which this difference is a parameter, and whose log-likelihood consists of the coverage term \eqref{eq:loglik_cov} alone. Its only parameters are the difference $\boldsymbol{\beta}_i - \boldsymbol{\gamma}_i$ and the intercepts $c^{\pi}_{i}$. The exonic and intronic counts are no longer described, so $\boldsymbol{\alpha}$, the intercepts $c^{\mathrm{exon}}$ and $c^{\mathrm{intron}}_{i}$, and the offset terms are not needed. This variant estimates fewer nuisance parameters, and its estimate does not depend on the quantities entering the counts, such as the library sizes or the average transcript lengths. Its LFC may again be specific to an intron, specific to a gene, or shared across all the genes.
+	
+	\subsection{Compositional Non-identifiability} \label{subsec:compositional_nonidef}
+
+	RNA-seq data are compositional \citep{quinnUnderstandingSequencingData2018}, meaning that the counts describe the proportions of the RNA species within a sample, while the total number of reads of a sample is set by the sequencing run rather than by the amount of RNA in the cells. This is the second source of non-identifiability, which we mentioned in the section \nameref{subsec:structural_nonidef}, and it is a property of the data rather than of our model. In a standard differential expression analysis, a change of the counts shared by all the genes is for this reason not identifiable, as multiplying all the counts of a sample by a factor $c \in \mathbb{R}_+$ is absorbed into the library size. Such an analysis therefore estimates an LFC of every gene relative to the other ones, with the reference given by the way in which the library sizes are estimated. The methods in common use, such as the median of ratios \citep{andersDifferentialExpressionAnalysis2010}, are constructed so that this estimate is not driven by the genes whose counts do change, and the LFCs are then reported relative to the bulk of the genes. We will now discuss what the compositional structure of the data means for our model.
+
+	We first note from the steady state solution \eqref{eq:t_nas_ss}--\eqref{eq:i_unspliced_ss} that $k_{\mathrm{init}}$ scales the abundance of every type of RNA molecule, and that it is the only rate which does so. Multiplying $k_{\mathrm{init}}$ of all the genes of a sample by a common factor $c \in \mathbb{R}_+$ therefore multiplies the number of the RNA molecules of every type in that sample by $c$, and leaves the proportions between them unchanged. Such a change is absorbed into the library size, exactly as in a standard differential expression analysis, and is not identifiable from RNA-seq data. This is also the second of the two reasons, mentioned in the section \nameref{subsec:model_variants}, why the global variant of our model does not share $\boldsymbol{\alpha}$ across the genes. The parameter $\boldsymbol{\alpha}$ is the LFC of the ratio $k_{\mathrm{init}} / k_{\mathrm{deg}}$ \eqref{eq:alpha_def}, whose $k_{\mathrm{init}}$ part, once shared by all the genes, is exactly the non-identifiable direction described above. A change of $k_{\mathrm{deg}}$ shared by all the genes can still be captured by the parameters $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$, as described below.
+
+	The intron-specific and the gene-specific variants of our model consequently inherit the assumption of a standard differential expression analysis, which for a given gene states that the read counts of the remaining genes, taken as a whole, do not change between the conditions. Such a change may come from any of the kinetic rates, for example from a change of $k_{\mathrm{splice}}$ in a large group of genes, which moves their intronic counts. When the assumption is violated, all the counts of the gene of interest are scaled by a common factor, mimicking a change of $k_{\mathrm{init}}$ of that gene. Our model therefore absorbs the violation into $\boldsymbol{\alpha}$, the only parameter which contains $k_{\mathrm{init}}$. The quantities derived from $\boldsymbol{\alpha}$ are affected as well, for example $\boldsymbol{\alpha} - \boldsymbol{\beta}_i$ \eqref{eq:lfc_init_over_elong}, the LFC of the ratio $k_{\mathrm{init}} / k_{\mathrm{elong},i}$. The parameters $\boldsymbol{\beta}_i$ and $\boldsymbol{\gamma}_i$ are not affected, and neither is their difference $\boldsymbol{\beta}_i - \boldsymbol{\gamma}_i$ \eqref{eq:lfc_elong_over_splice}, which the coverage-only variant of the section \nameref{subsec:model_variants} estimates as a parameter of its own.
+
+	The same argument as above also applies when $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$ are shared across the genes, so the global variant is not affected either. A change of $k_{\mathrm{deg}}$, $k_{\mathrm{elong}}$ or $k_{\mathrm{splice}}$ shared by all the genes is therefore still captured by $\boldsymbol{\beta}$ and $\boldsymbol{\gamma}$, and $k_{\mathrm{init}}$ is the only rate whose globally shared change is non-identifiable.
+
 
     \section{Results}
     I will apply the model on some data, e.g. ENCODE datasets of stem cell differentiation, or degron mediated protein KD. Will plot and describe the results here. Should mainly serve for illustration, maybe e.g. mutations known to influence elongation speed (Drosophilla and C. Elegans data, maybe human cell lines if data are available).
-
+ 
 
     \section{Discussion}
     Discuss stuff here.
+
+% TODO (Poisson vs. negative binomial): we model the counts as Poisson, not negative binomial.
+% Points to make here rather than in the methods:
+%   - alpha is a nuisance parameter in our model; readers interested in the LFC of expression
+%     itself should use DESeq2 or a similar tool, which models the overdispersion.
+%   - the model could be extended to a negative binomial likelihood, but the estimation is already
+%     substantially complicated by the read positions, so we leave this for future work.
 
 
     \section*{Code availability}
