@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable, Optional, OrderedDict
+from typing import Callable, NamedTuple, Optional, OrderedDict
 
 import numpy as np
 import pandas as pd
@@ -35,6 +35,19 @@ class CacheForRegularization:
     intron_specific_lfc: Optional[bool] = None  # RNAKineticsModel only: LFC parameter shape
 
 
+class LRTInputs(NamedTuple):
+    """
+    Everything needed to run and report one likelihood ratio test.
+
+    The tests are enumerated before any fitting so the restart loop can address them by position
+    and refit the same set repeatedly, keeping the best attempt for each. `lrt_specification` is
+    None for the coverage models, whose single LFC is the only thing they can restrict.
+    """
+    lrt_metadata_row: pd.Series
+    reduced_design_matrix: torch.Tensor
+    lrt_specification: Optional[LRTSpecification] = None
+
+
 def _get_lfc_without_intron_axis(lfc: torch.Tensor, intron_index: int) -> torch.Tensor:
     """One LFC parameter as a (num_features,) vector, dropping the intron axis where it has one."""
     return lfc if lfc.dim() == 1 else lfc[:, intron_index]
@@ -61,6 +74,52 @@ def get_lfc_of_tested_ratio(state_dict: StateDict,
     return lfc
 
 
+def get_lfc_of_column(lfc_of_tested_ratio: torch.Tensor,
+                      feature_names: list[str],
+                      column_name) -> float:
+    """
+    One design column's share of the tested ratio's LFC, for assembling a reported effect size.
+
+    A contrast is a difference between two design columns, named by `lfc_column_positive` and
+    `lfc_column_negative` in the LRT metadata. Either can be absent, in which case
+    `create_design_matrices.R` writes an empty string, which arrives here as NaN once the TSV has
+    been through pandas, and the column contributes zero. That happens in two situations:
+
+    - a categorical contrast against the factor's reference level, which has no column of its own
+      because the intercept absorbs it
+    - a continuous covariate, which has no second group at all
+
+    So `lfc = get_lfc_of_column(positive) - get_lfc_of_column(negative)` gives the LFC relative to
+    the reference in the first case, and the covariate's own LFC in the second.
+    """
+    if pd.isna(column_name):
+        return 0.0
+    return lfc_of_tested_ratio[feature_names.index(column_name)].item()
+
+
+def get_projection_onto_design(design_matrix: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """
+    Least-squares coefficients of `target` on `[1, design_matrix]`, with the constant dropped.
+
+    The constant column is in the projection but not in the result because the models carry their
+    own intercepts: what a design can reproduce is a term up to an additive constant, and which
+    intercepts absorb that constant is a per-model question answered by the absorb_* functions.
+    Including it is also what makes the projection exact in both directions, since a reduced design
+    is nested in the full one only once the constant is there -- relevelling a categorical variable
+    leaves the raw column spaces genuinely non-nested.
+
+    `target` is (num_samples,) or (num_samples, k); the result is (num_features,) or
+    (num_features, k) to match.
+    """
+    is_one_dimensional = target.dim() == 1
+    constant_column = design_matrix.new_ones(design_matrix.shape[0], 1)
+    design_with_constant = torch.cat([constant_column, design_matrix], dim=1)
+    solution = torch.linalg.lstsq(
+        design_with_constant, target.unsqueeze(1) if is_one_dimensional else target).solution
+    coefficients = solution[1:]
+    return coefficients.squeeze(1) if is_one_dimensional else coefficients
+
+
 def get_hot_start_reduced_lfc(design_matrix: torch.Tensor,
                               reduced_design_matrix: torch.Tensor,
                               lfc_of_tested_ratio: torch.Tensor) -> torch.Tensor:
@@ -69,71 +128,193 @@ def get_hot_start_reduced_lfc(design_matrix: torch.Tensor,
 
     Shaped like lfc_of_tested_ratio, which is (num_features,) for the rna_kinetics models and
     (num_features, num_introns) for the coverage models.
-
-    Projected onto [1, reduced_design_matrix] rather than onto the reduced matrix alone. The model
-    carries its own intercepts, so what it can reproduce is the full model's term up to an additive
-    constant, and the reduced design is nested in the full one only once that constant is included
-    -- relevelling a categorical variable makes the raw column spaces genuinely non-nested. The
-    leftover constant is then moved into the intercepts by absorb_read_class_shifts.
     """
     is_one_dimensional = lfc_of_tested_ratio.dim() == 1
     target = design_matrix @ (lfc_of_tested_ratio.unsqueeze(1) if is_one_dimensional
                               else lfc_of_tested_ratio)
-    constant_column = reduced_design_matrix.new_ones(reduced_design_matrix.shape[0], 1)
-    reduced_matrix_with_constant = torch.cat([constant_column, reduced_design_matrix], dim=1)
-    solution = torch.linalg.lstsq(reduced_matrix_with_constant, target).solution
-    reduced_lfc = solution[1:]
+    reduced_lfc = get_projection_onto_design(reduced_design_matrix, target)
     return reduced_lfc.squeeze(1) if is_one_dimensional else reduced_lfc
 
 
-def absorb_read_class_shifts(model_reduced: nn.Module,
-                             model_full: nn.Module,
+def absorb_read_class_shifts(model_to_adjust: nn.Module,
+                             model_target: nn.Module,
                              design_matrix: torch.Tensor,
                              reduced_design_matrix: torch.Tensor) -> None:
     """
-    Move the reduced model's intercepts so that its predictions match the full model's as closely
-    as the reduced design allows. Modifies model_reduced in place.
+    Move `model_to_adjust`'s intercepts so its predictions match `model_target`'s as closely as its
+    own design allows. Modifies `model_to_adjust` in place.
 
-    Restricting a read class shifts its LFC term by a constant, which the intercepts can absorb
+    Each read class's LFC term is identified only up to a constant, which the intercepts absorb
     exactly: the exon class sits under intercept_exon alone, the nascent class under
     intercept_unspliced + intercept_pi_logit, and the unspliced class under intercept_unspliced,
     so shifting the unspliced class also needs intercept_pi_logit to keep the nascent class put.
 
-    The shift is measured rather than derived per tested ratio, which keeps one rule for all six.
-    Its mean over samples is the right constant to absorb: the hot start leaves a residual that is
-    orthogonal to the constant vector, so the mean is exactly the constant the projection dropped,
-    and when the two designs span the same space the residual vanishes and the reduced model starts
-    at the full model's loss.
+    The shift is measured rather than derived per tested ratio, which keeps one rule for all six
+    and lets this serve both directions -- hot starting a reduced model from the full fit, and
+    restarting the full fit from a reduced solution that beat it. Each model is asked for its own
+    terms according to its own mode, so the caller need not say which is which. Taking the mean
+    over samples is right because the projection's residual is orthogonal to the constant vector,
+    so the mean is exactly the constant the projection dropped; when the two designs span the same
+    space the residual vanishes and the adjusted model starts at the target's loss.
     """
+    def get_terms(model: nn.Module) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return model.get_lfc_terms_per_read_class(
+            design_matrix, reduced_design_matrix if model.lrt_specification is not None else None)
+
     with torch.no_grad():
-        full_terms = model_full.get_lfc_terms_per_read_class(design_matrix, None)
-        reduced_terms = model_reduced.get_lfc_terms_per_read_class(design_matrix,
-                                                                   reduced_design_matrix)
         shift_exon, shift_nascent, shift_unspliced = (
-            (reduced - full).mean(dim=0) for reduced, full in zip(reduced_terms, full_terms))
+            (adjusted - target).mean(dim=0)
+            for adjusted, target in zip(get_terms(model_to_adjust), get_terms(model_target)))
 
-        model_reduced.intercept_exon -= shift_exon
-        model_reduced.intercept_unspliced -= shift_unspliced
-        model_reduced.intercept_pi_logit += shift_unspliced - shift_nascent
+        model_to_adjust.intercept_exon -= shift_exon
+        model_to_adjust.intercept_unspliced -= shift_unspliced
+        model_to_adjust.intercept_pi_logit += shift_unspliced - shift_nascent
 
 
-def absorb_coverage_model_shift(model_reduced: IntronCoverageModel,
-                                model_full: IntronCoverageModel,
-                                design_matrix: torch.Tensor,
-                                reduced_design_matrix: torch.Tensor) -> None:
+def absorb_coverage_model_shift(model_to_adjust: IntronCoverageModel,
+                                design_matrix_to_adjust: torch.Tensor,
+                                model_target: IntronCoverageModel,
+                                design_matrix_target: torch.Tensor) -> None:
     """
-    Move the reduced coverage model's intercept so its predicted pi matches the full model's as
-    closely as the reduced design allows. Modifies model_reduced in place.
+    Move `model_to_adjust`'s intercept so its predicted pi matches `model_target`'s as closely as
+    its own design allows. Modifies `model_to_adjust` in place.
 
     The counterpart of absorb_read_class_shifts for the coverage-only models, which predict
     pi = sigmoid(intercept_pi_logit - X @ lfc_elong_over_splice) and so have a single LFC term
-    under a single intercept. The term enters negatively, so the intercept takes the shift with
-    the same sign.
+    under a single intercept. The term enters negatively, so the intercept takes the shift with the
+    same sign. Each model is paired with its own design matrix, so this also serves both directions.
     """
     with torch.no_grad():
-        shift = ((reduced_design_matrix @ model_reduced.lfc_elong_over_splice)
-                 - (design_matrix @ model_full.lfc_elong_over_splice)).mean(dim=0)
-        model_reduced.intercept_pi_logit += shift
+        shift = ((design_matrix_to_adjust @ model_to_adjust.lfc_elong_over_splice)
+                 - (design_matrix_target @ model_target.lfc_elong_over_splice)).mean(dim=0)
+        model_to_adjust.intercept_pi_logit += shift
+
+
+def set_reduced_rna_kinetics_model_from_full(model_reduced: nn.Module,
+                                             model_full: nn.Module,
+                                             design_matrix: torch.Tensor,
+                                             reduced_design_matrix: torch.Tensor,
+                                             intron_index: int = 0) -> None:
+    """
+    Point `model_reduced` at the closest thing to `model_full`'s solution that its own design can
+    express. Modifies `model_reduced` in place.
+
+    Every parameter carries over except the one the test restricts, which is replaced by the
+    reduced design's best fit to the tested ratio's term, and the constant that fit leaves over is
+    absorbed by the intercepts. Serves RNAKineticsModel and GlobalRNAKineticsModel alike;
+    `intron_index` picks the tested intron where their LFCs are intron-specific.
+
+    The counterpart of set_full_rna_kinetics_model_from_reduced, which goes the other way when a
+    reduced fit lands below the full one.
+    """
+    _copy_shared_parameters(model_reduced, model_full)
+    if reduced_design_matrix.shape[1] > 0:
+        with torch.no_grad():
+            model_reduced.reduced_lfc.copy_(get_hot_start_reduced_lfc(
+                design_matrix, reduced_design_matrix,
+                get_lfc_of_tested_ratio(model_full.state_dict(),
+                                        model_reduced.lrt_specification.tested_ratio,
+                                        intron_index)))
+    absorb_read_class_shifts(model_reduced, model_full, design_matrix, reduced_design_matrix)
+
+
+def set_reduced_coverage_model_from_full(model_reduced: IntronCoverageModel,
+                                         reduced_design_matrix: torch.Tensor,
+                                         model_full: IntronCoverageModel,
+                                         design_matrix: torch.Tensor) -> None:
+    """
+    The IntronCoverageModel counterpart of set_reduced_rna_kinetics_model_from_full.
+
+    The intercept is copied rather than the whole state dict, because the two models' single LFC
+    has a different number of features and would not load.
+    """
+    with torch.no_grad():
+        model_reduced.intercept_pi_logit.copy_(model_full.intercept_pi_logit)
+        if reduced_design_matrix.shape[1] > 0:
+            model_reduced.lfc_elong_over_splice.copy_(get_hot_start_reduced_lfc(
+                design_matrix, reduced_design_matrix, model_full.lfc_elong_over_splice.detach()))
+    absorb_coverage_model_shift(model_reduced, reduced_design_matrix,
+                                model_full, design_matrix)
+
+
+def _copy_shared_parameters(model_destination: nn.Module, model_source: nn.Module) -> None:
+    """Copy every parameter the two models have in common, skipping any they do not."""
+    destination_state = model_destination.state_dict()
+    for key, value in model_source.state_dict().items():
+        if key in destination_state:
+            destination_state[key] = value
+    model_destination.load_state_dict(destination_state)
+
+
+def set_full_rna_kinetics_model_from_reduced(model_full: nn.Module,
+                                               model_reduced: nn.Module,
+                                               design_matrix: torch.Tensor,
+                                               reduced_design_matrix: torch.Tensor) -> None:
+    """
+    Point `model_full` at `model_reduced`'s solution, so that refitting resumes from there.
+    Modifies `model_full` in place.
+
+    The reverse of hot starting a reduced model, used when a reduced fit lands below the full fit:
+    the full model nests the reduced one, so the reduced solution is reachable and the full fit had
+    simply stopped somewhere worse.
+
+    Needs no per-ratio knowledge. The reduced model's three read-class terms are
+    exon = X alpha, nascent = X(alpha - beta) and unspliced = X(alpha - gamma), so projecting each
+    onto the full design recovers all three parameters, whichever ratio was restricted. The
+    projection is exact because the reduced design is nested in [1, X], and whatever constant it
+    drops is then absorbed by the intercepts.
+    """
+    _copy_shared_parameters(model_full, model_reduced)
+    with torch.no_grad():
+        exon_term, nascent_term, unspliced_term = model_reduced.get_lfc_terms_per_read_class(
+            design_matrix, reduced_design_matrix)
+        lfc_init_over_deg = get_projection_onto_design(design_matrix, exon_term)
+        init_over_deg_per_intron = lfc_init_over_deg.unsqueeze(1)
+        model_full.lfc_init_over_deg.copy_(lfc_init_over_deg)
+        model_full.lfc_elong_over_deg.copy_(
+            init_over_deg_per_intron - get_projection_onto_design(design_matrix, nascent_term))
+        model_full.lfc_splice_over_deg.copy_(
+            init_over_deg_per_intron - get_projection_onto_design(design_matrix, unspliced_term))
+    absorb_read_class_shifts(model_full, model_reduced, design_matrix, reduced_design_matrix)
+
+
+def set_full_global_rna_kinetics_model_from_reduced(model_full: nn.Module,
+                                                      model_reduced: nn.Module,
+                                                      design_matrix: torch.Tensor,
+                                                      reduced_design_matrix: torch.Tensor) -> None:
+    """
+    The GlobalRNAKineticsModel counterpart of set_full_rna_kinetics_model_from_reduced.
+
+    lfc_init_over_deg is per gene here and no tested ratio involves initiation
+    (GLOBAL_MODEL_TESTED_RATIOS), so it carries over unchanged and the exon class already matches.
+    The other two are shared across introns, so the per-intron difference between the initiation
+    term and a read class is the same in every column and is averaged over them.
+    """
+    _copy_shared_parameters(model_full, model_reduced)
+    with torch.no_grad():
+        exon_term, nascent_term, unspliced_term = model_reduced.get_lfc_terms_per_read_class(
+            design_matrix, reduced_design_matrix)
+        init_over_deg_per_intron = exon_term[:, model_reduced.gene_idx]
+        model_full.lfc_elong_over_deg.copy_(get_projection_onto_design(
+            design_matrix, (init_over_deg_per_intron - nascent_term).mean(dim=1)))
+        model_full.lfc_splice_over_deg.copy_(get_projection_onto_design(
+            design_matrix, (init_over_deg_per_intron - unspliced_term).mean(dim=1)))
+    absorb_read_class_shifts(model_full, model_reduced, design_matrix, reduced_design_matrix)
+
+
+def set_full_coverage_model_from_reduced(model_full: IntronCoverageModel,
+                                           design_matrix: torch.Tensor,
+                                           model_reduced: IntronCoverageModel,
+                                           reduced_design_matrix: torch.Tensor) -> None:
+    """
+    The IntronCoverageModel counterpart of set_full_rna_kinetics_model_from_reduced. One LFC
+    term, recovered by projecting the reduced model's onto the full design.
+    """
+    with torch.no_grad():
+        model_full.intercept_pi_logit.copy_(model_reduced.intercept_pi_logit)
+        model_full.lfc_elong_over_splice.copy_(get_projection_onto_design(
+            design_matrix, reduced_design_matrix @ model_reduced.lfc_elong_over_splice))
+    absorb_coverage_model_shift(model_full, design_matrix, model_reduced, reduced_design_matrix)
 
 
 def make_lbfgs_optimizer(model: nn.Module) -> optim.LBFGS:
@@ -161,7 +342,11 @@ def train_model(
     previous_loss = None
     patience_counter = 0
 
-    best_loss = np.inf
+    # Seeded with the starting point, so that training can never return a model worse than the one
+    # it was given. Without this the first epoch's loss is accepted unconditionally, even when the
+    # optimizer stepped uphill, which would break the warm starts the LRT restarts rely on.
+    initial_loss = evaluate_loss().item()
+    best_loss = initial_loss if np.isfinite(initial_loss) else np.inf
     best_state_dict = {k: v.detach().clone() for k, v in model.state_dict().items()}
 
     converged_within_max_epochs = False
@@ -373,6 +558,102 @@ def add_wald_test_results(df_param: pd.DataFrame, hessian_matrix: torch.Tensor) 
     return df_param
 
 
+# A reduced model landing below the full model means the full fit stopped somewhere worse, since
+# the full model nests the reduced one. Restarting the full fit from that solution fixes it, and
+# the reduced models are then refitted from the improved full fit, which can find better optima of
+# their own and so trigger another round. Each round lowers the full loss by at least the
+# tolerance, so this terminates; the cap is a backstop.
+MAX_FULL_MODEL_RESTARTS = 10
+
+# Only restart when a reduced model beats the full one by more than this. Guards the degenerate
+# case where the reduced design spans the same space as the full one, which makes the comparison
+# pure floating-point noise; on real contrasts the gap is orders of magnitude larger than this.
+RESTART_LOSS_TOLERANCE = 0.1
+
+
+@dataclass
+class FullAndReducedFits:
+    """
+    A full model fitted together with the reduced models of its likelihood ratio tests.
+
+    `results_reduced` is aligned with the reduced models the caller enumerated, and each entry is
+    the best attempt for that test rather than the last, so its training flags describe the
+    attempt whose loss is reported.
+    """
+    model_full: nn.Module
+    results_full: TrainingResults
+    results_reduced: list[TrainingResults]
+    num_full_model_restarts: int
+
+
+def fit_full_and_reduced_models(
+        fit_full_from_scratch: Callable[[], tuple[nn.Module, TrainingResults]],
+        fit_reduced: Callable[[nn.Module, int], tuple[nn.Module, TrainingResults]],
+        refit_full_from_reduced: Callable[[nn.Module, int], tuple[nn.Module, TrainingResults]],
+        num_reduced_models: int,
+        max_restarts: int = MAX_FULL_MODEL_RESTARTS,
+        loss_tolerance: float = RESTART_LOSS_TOLERANCE,
+) -> FullAndReducedFits:
+    """
+    Fit the full model and every reduced model, restarting the full fit whenever a reduced one
+    beats it.
+
+    The caller supplies three closures and the number of reduced models. `lrt_index` addresses
+    the caller's own list of enumerated tests, which must stay in the same order throughout:
+    `fit_reduced(model_full, lrt_index)` hot starts that test's reduced model from the current
+    full fit, and `refit_full_from_reduced(model_reduced, lrt_index)` points a fresh full model
+    at that test's reduced solution and refits it.
+
+    Everything the caller derives from the full fit -- parameter values, standard errors,
+    chi-squared statistics, the reported effect sizes and the state dict cached for the
+    regularized refit -- has to be computed from the result of this function rather than from an
+    earlier fit, because the full model can change here.
+    """
+    model_full, results_full = fit_full_from_scratch()
+    best_results_reduced: list[Optional[TrainingResults]] = [None] * num_reduced_models
+    best_models_reduced: list[Optional[nn.Module]] = [None] * num_reduced_models
+    num_full_model_restarts = 0
+
+    while True:
+        for lrt_index in range(num_reduced_models):
+            model_reduced, results_reduced = fit_reduced(model_full, lrt_index)
+            previous_best = best_results_reduced[lrt_index]
+            if previous_best is None or results_reduced.final_loss < previous_best.final_loss:
+                best_results_reduced[lrt_index] = results_reduced
+                best_models_reduced[lrt_index] = model_reduced
+
+        outperforming_indices = [
+            lrt_index for lrt_index in range(num_reduced_models)
+            if best_results_reduced[lrt_index].final_loss < results_full.final_loss - loss_tolerance]
+        if not outperforming_indices or num_full_model_restarts >= max_restarts:
+            break
+
+        best_index = min(outperforming_indices,
+                         key=lambda lrt_index: best_results_reduced[lrt_index].final_loss)
+        candidate_model, candidate_results = refit_full_from_reduced(
+            best_models_reduced[best_index], best_index)
+        num_full_model_restarts += 1
+        if candidate_results.final_loss >= results_full.final_loss:
+            # Unreachable while the reverse hot start is exact: the refit starts at the reduced
+            # model's loss, which is below the full model's by more than the tolerance, and
+            # train_model never returns worse than its starting point. Kept because without it a
+            # non-improving restart would repeat identical rounds until the cap.
+            break
+        model_full, results_full = candidate_model, candidate_results
+
+    return FullAndReducedFits(model_full=model_full,
+                              results_full=results_full,
+                              results_reduced=best_results_reduced,
+                              num_full_model_restarts=num_full_model_restarts)
+
+
+def _get_tested_intron_index(gene_data: GeneData, lrt_specification: LRTSpecification) -> int:
+    """Position of the tested intron, or 0 when the tested ratio is shared across the gene."""
+    if lrt_specification.tested_intron is None:
+        return 0
+    return gene_data.intron_names.index(lrt_specification.tested_intron)
+
+
 def get_rna_kinetics_model_results(gene_data: GeneData,
                                    dataset_metadata: DatasetMetadata,
                                    intron_specific_lfc: bool,
@@ -381,23 +662,80 @@ def get_rna_kinetics_model_results(gene_data: GeneData,
     gene_data = gene_data.to(device)
     dataset_metadata = dataset_metadata.to(device)
 
-    model_full = RNAKineticsModel(feature_names=dataset_metadata.feature_names,
-                                  intron_names=gene_data.intron_names,
-                                  intron_specific_lfc=intron_specific_lfc).to(device)
-    model_full.initialize_parameters(gene_data, dataset_metadata.library_sizes, dataset_metadata.design_matrix)
+    # Enumerated up front so the reduced models can be indexed by position by the restart loop.
+    # Every ratio except init/deg involves elongation or splicing, so it is tested one intron at a
+    # time whenever those LFCs are intron-specific.
+    lrt_inputs: list[LRTInputs] = []
+    for _, lrt_metadata_row in dataset_metadata.lrt_metadata.iterrows():
+        reduced_design_matrix = dataset_metadata.reduced_matrices[lrt_metadata_row['test_id']]
+        for tested_ratio in TestedRatio:
+            tests_single_intron = intron_specific_lfc and tested_ratio != TestedRatio.INIT_OVER_DEG
+            for intron_name in (gene_data.intron_names if tests_single_intron else [None]):
+                lrt_inputs.append(LRTInputs(
+                    lrt_metadata_row=lrt_metadata_row,
+                    reduced_design_matrix=reduced_design_matrix,
+                    lrt_specification=LRTSpecification(
+                        num_features_reduced_matrix=reduced_design_matrix.shape[1],
+                        tested_ratio=tested_ratio,
+                        tested_intron=intron_name)))
 
-    optimizer_full = make_lbfgs_optimizer(model_full)
-    closure_full, evaluate_loss_full = _make_rna_kinetics_closures(
-        model_full, optimizer_full, gene_data, dataset_metadata,
-    )
-    model_full, training_results_full = train_model(model_full, optimizer_full, closure_full, evaluate_loss_full)
+    def build_full_model() -> RNAKineticsModel:
+        return RNAKineticsModel(feature_names=dataset_metadata.feature_names,
+                                intron_names=gene_data.intron_names,
+                                intron_specific_lfc=intron_specific_lfc).to(device)
 
+    def fit(model: RNAKineticsModel,
+            reduced_design_matrix: Optional[torch.Tensor]) -> tuple[RNAKineticsModel,
+                                                                    TrainingResults]:
+        optimizer = make_lbfgs_optimizer(model)
+        closure, evaluate_loss = _make_rna_kinetics_closures(
+            model, optimizer, gene_data, dataset_metadata, reduced_matrix=reduced_design_matrix)
+        return train_model(model, optimizer, closure, evaluate_loss)
+
+    def fit_full_from_scratch() -> tuple[RNAKineticsModel, TrainingResults]:
+        model = build_full_model()
+        model.initialize_parameters(gene_data, dataset_metadata.library_sizes,
+                                   dataset_metadata.design_matrix)
+        return fit(model, None)
+
+    def fit_reduced(model_full: RNAKineticsModel,
+                    lrt_index: int) -> tuple[RNAKineticsModel, TrainingResults]:
+        lrt_input = lrt_inputs[lrt_index]
+        model_reduced = RNAKineticsModel(
+            feature_names=dataset_metadata.feature_names,
+            intron_names=gene_data.intron_names,
+            intron_specific_lfc=intron_specific_lfc,
+            lrt_specification=lrt_input.lrt_specification).to(device)
+
+        set_reduced_rna_kinetics_model_from_full(
+            model_reduced, model_full, dataset_metadata.design_matrix,
+            lrt_input.reduced_design_matrix,
+            _get_tested_intron_index(gene_data, lrt_input.lrt_specification))
+        return fit(model_reduced, lrt_input.reduced_design_matrix)
+
+    def refit_full_from_reduced(model_reduced: RNAKineticsModel,
+                                lrt_index: int) -> tuple[RNAKineticsModel, TrainingResults]:
+        model = build_full_model()
+        set_full_rna_kinetics_model_from_reduced(
+            model, model_reduced, dataset_metadata.design_matrix,
+            lrt_inputs[lrt_index].reduced_design_matrix)
+        return fit(model, None)
+
+    fits = fit_full_and_reduced_models(fit_full_from_scratch=fit_full_from_scratch,
+                                       fit_reduced=fit_reduced,
+                                       refit_full_from_reduced=refit_full_from_reduced,
+                                       num_reduced_models=len(lrt_inputs))
+    model_full, results_full = fits.model_full, fits.results_full
+
+    # Everything below is derived from the full fit, so it has to come after the restart loop:
+    # a restart replaces the full model, and the parameter values, standard errors, chi-squared
+    # statistics, effect sizes and cached state dict all describe whichever fit was kept.
     model_param_df = model_full.get_param_df()
     model_param_df['gene_name'] = gene_data.gene_name
-    model_param_df['loss_full_model'] = training_results_full.final_loss
-    model_param_df['training_diverged_full_model'] = training_results_full.training_diverged
+    model_param_df['loss_full_model'] = results_full.final_loss
+    model_param_df['training_diverged_full_model'] = results_full.training_diverged
     model_param_df[
-        'training_converged_within_max_epochs_full_model'] = training_results_full.converged_within_max_epochs
+        'training_converged_within_max_epochs_full_model'] = results_full.converged_within_max_epochs
 
     # Wald test
     rna_kinetics_loss = RNAKineticsLoss(num_position_coverage=gene_data.coverage.shape[2]).to(device)
@@ -417,82 +755,41 @@ def get_rna_kinetics_model_results(gene_data: GeneData,
     fisher_information_matrix = get_fisher_information_matrix(model_full, rna_kinetics_loss_by_params)
     model_param_df = add_wald_test_results(model_param_df, fisher_information_matrix)
 
+    state_dict_model_full = model_full.state_dict()
+    feature_names = dataset_metadata.feature_names
     test_results_list: list[dict] = []
-    for _, lrt_metadata_row in dataset_metadata.lrt_metadata.iterrows():
-        reduced_design_matrix = dataset_metadata.reduced_matrices[lrt_metadata_row['test_id']]
-        for tested_ratio in TestedRatio:
-            # Every ratio except init/deg involves elongation or splicing, so it is tested one
-            # intron at a time whenever those LFCs are intron-specific.
-            tests_single_intron = intron_specific_lfc and tested_ratio != TestedRatio.INIT_OVER_DEG
-            tested_introns = gene_data.intron_names if tests_single_intron else [None]
-            for intron_name in tested_introns:
-                lrt_specification = LRTSpecification(num_features_reduced_matrix=reduced_design_matrix.shape[1],
-                                                     tested_ratio=tested_ratio,
-                                                     tested_intron=intron_name)
+    for lrt_index, lrt_input in enumerate(lrt_inputs):
+        lrt_specification = lrt_input.lrt_specification
+        results_reduced = fits.results_reduced[lrt_index]
+        # Read off the tested ratio rather than the parameter table: three of the six ratios have
+        # no row of their own there.
+        lfc_of_tested_ratio = get_lfc_of_tested_ratio(
+            state_dict_model_full, lrt_specification.tested_ratio,
+            _get_tested_intron_index(gene_data, lrt_specification))
 
-                model_reduced = RNAKineticsModel(feature_names=dataset_metadata.feature_names,
-                                                 intron_names=gene_data.intron_names,
-                                                 intron_specific_lfc=intron_specific_lfc,
-                                                 lrt_specification=lrt_specification).to(device)
-
-                state_dict_model_full = model_full.state_dict()
-                hot_start_state_dict = model_reduced.state_dict()
-                for key, value in state_dict_model_full.items():
-                    hot_start_state_dict[key] = value
-
-                intron_index = 0 if intron_name is None else gene_data.intron_names.index(intron_name)
-                lfc_of_tested_ratio = get_lfc_of_tested_ratio(
-                    state_dict_model_full, tested_ratio, intron_index)
-
-                if reduced_design_matrix.shape[1] > 0:
-                    hot_start_state_dict['reduced_lfc'] = get_hot_start_reduced_lfc(
-                        dataset_metadata.design_matrix, reduced_design_matrix, lfc_of_tested_ratio)
-
-                model_reduced.load_state_dict(hot_start_state_dict)
-                absorb_read_class_shifts(model_reduced, model_full,
-                                         dataset_metadata.design_matrix, reduced_design_matrix)
-
-                optimizer_reduced = make_lbfgs_optimizer(model_reduced)
-                closure_reduced, evaluate_loss_reduced = _make_rna_kinetics_closures(
-                    model_reduced, optimizer_reduced, gene_data, dataset_metadata,
-                    reduced_matrix=reduced_design_matrix,
-                )
-                model_reduced, training_results_reduced = train_model(
-                    model_reduced, optimizer_reduced, closure_reduced, evaluate_loss_reduced,
-                )
-
-                test_result = lrt_metadata_row.to_dict()
-                test_result['tested_parameter'] = lrt_specification.tested_ratio
-                test_result['gene_name'] = gene_data.gene_name
-                test_result['intron_name'] = lrt_specification.tested_intron
-
-                test_result['training_diverged_reduced_model'] = training_results_reduced.training_diverged
-                test_result[
-                    'training_converged_within_max_epochs_reduced_model'] = training_results_reduced.converged_within_max_epochs
-
-                # Read off the tested ratio rather than the parameter table: three of the six
-                # ratios have no row of their own there.
-                feature_names = dataset_metadata.feature_names
-                def lfc_of_column(column_name) -> float:
-                    if pd.isna(column_name):
-                        return 0.0
-                    return lfc_of_tested_ratio[feature_names.index(column_name)].item()
-
-                lfc_value_positive = lfc_of_column(test_result['lfc_column_positive'])
-                lfc_value_negative = lfc_of_column(test_result['lfc_column_negative'])
-
-                test_result['lfc'] = lfc_value_positive - lfc_value_negative
-                test_result['loss_full_model'] = training_results_full.final_loss
-                test_result['loss_reduced_model'] = training_results_reduced.final_loss
-                test_result['chi2_test_statistics'] = 2 * (
-                        training_results_reduced.final_loss - training_results_full.final_loss)
-                test_result['p_value'] = 1 - stats.chi2.cdf(test_result['chi2_test_statistics'],
-                                                            df=test_result['lrt_df'])
-
-                test_results_list.append(test_result)
+        test_result = lrt_input.lrt_metadata_row.to_dict()
+        test_result['tested_parameter'] = lrt_specification.tested_ratio
+        test_result['gene_name'] = gene_data.gene_name
+        test_result['intron_name'] = lrt_specification.tested_intron
+        test_result['training_diverged_reduced_model'] = results_reduced.training_diverged
+        test_result[
+            'training_converged_within_max_epochs_reduced_model'] = results_reduced.converged_within_max_epochs
+        test_result['lfc'] = (
+                get_lfc_of_column(lfc_of_tested_ratio, feature_names,
+                                  test_result['lfc_column_positive'])
+                - get_lfc_of_column(lfc_of_tested_ratio, feature_names,
+                                    test_result['lfc_column_negative']))
+        test_result['loss_full_model'] = results_full.final_loss
+        test_result['loss_reduced_model'] = results_reduced.final_loss
+        test_result['chi2_test_statistics'] = 2 * (results_reduced.final_loss
+                                                   - results_full.final_loss)
+        test_result['p_value'] = 1 - stats.chi2.cdf(test_result['chi2_test_statistics'],
+                                                    df=test_result['lrt_df'])
+        test_result['num_full_model_restarts'] = fits.num_full_model_restarts
+        test_results_list.append(test_result)
 
     test_results_df = pd.DataFrame(test_results_list)
-    return model_param_df, test_results_df, model_full.state_dict()
+    return model_param_df, test_results_df, state_dict_model_full
 
 
 def get_regularized_rna_kinetics_model_results(gene_data: GeneData,
@@ -542,86 +839,118 @@ def get_intron_coverage_model_results(
         coverage: torch.Tensor,
         dataset_metadata: DatasetMetadata,
         intron_names: list[str],
+        is_global_model: bool = False,
         device: str = 'cpu',
         verbose: bool = False,
-        compute_wald_test: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame, StateDict]:
+    """
+    Fit IntronCoverageModel to the given introns and run its likelihood ratio tests.
+
+    `is_global_model` says the single LFC is shared across the whole dataset's introns rather than
+    one gene's, which changes two things. Training goes through `_train_two_stage`, because there
+    are then tens of thousands of per-intron intercepts against that one LFC and optimising the
+    LFC alone first is far better conditioned. And no Wald test is computed, because the Fisher
+    information would be one row and column per intercept, making it very large.
+    """
     coverage = coverage.to(device)
     dataset_metadata = dataset_metadata.to(device)
 
-    # The intron the LFC is reported under; None when it is shared across several introns.
+    # The intron the LFC is reported under; None when it is shared across several introns, which
+    # is always the case for the global model.
     lfc_intron_name = intron_names[0] if len(intron_names) == 1 else None
 
-    model_full = IntronCoverageModel(
-        feature_names=dataset_metadata.feature_names,
-        intron_names=intron_names,
-    ).to(device)
-    model_full.initialize_parameters(coverage)
+    # No lrt_specification: this model's single LFC is the only thing it can restrict.
+    lrt_inputs = [LRTInputs(lrt_metadata_row=row,
+                            reduced_design_matrix=dataset_metadata.reduced_matrices[row['test_id']])
+                  for _, row in dataset_metadata.lrt_metadata.iterrows()]
 
-    optimizer_full = make_lbfgs_optimizer(model_full)
-    closure_full, evaluate_loss_full = _make_intron_coverage_closures(
-        model_full, optimizer_full, coverage, dataset_metadata.design_matrix,
-    )
-    model_full, results_full = train_model(model_full, optimizer_full, closure_full, evaluate_loss_full,
-                                           verbose=verbose)
+    def fit(model: IntronCoverageModel,
+            design_matrix: torch.Tensor,
+            label: str) -> tuple[IntronCoverageModel, TrainingResults]:
+        if is_global_model:
+            return _train_two_stage(
+                model,
+                global_param_names={LFCParameter.ELONG_OVER_SPLICE},
+                make_closures=lambda opt: _make_intron_coverage_closures(
+                    model, opt, coverage, design_matrix),
+                label=label,
+                verbose=verbose,
+            )
+        optimizer = make_lbfgs_optimizer(model)
+        closure, evaluate_loss = _make_intron_coverage_closures(
+            model, optimizer, coverage, design_matrix)
+        return train_model(model, optimizer, closure, evaluate_loss, verbose=verbose)
 
+    def build_full_model() -> IntronCoverageModel:
+        return IntronCoverageModel(feature_names=dataset_metadata.feature_names,
+                                   intron_names=intron_names).to(device)
+
+    def fit_full_from_scratch() -> tuple[IntronCoverageModel, TrainingResults]:
+        model = build_full_model()
+        model.initialize_parameters(coverage)
+        return fit(model, dataset_metadata.design_matrix, 'Intron coverage | full model')
+
+    def fit_reduced(model_full: IntronCoverageModel,
+                    lrt_index: int) -> tuple[IntronCoverageModel, TrainingResults]:
+        reduced_matrix = lrt_inputs[lrt_index].reduced_design_matrix
+        model_reduced = IntronCoverageModel(
+            feature_names=[f'reduced_feature_{i}' for i in range(reduced_matrix.shape[1])],
+            intron_names=intron_names,
+        ).to(device)
+        set_reduced_coverage_model_from_full(model_reduced, reduced_matrix,
+                                            model_full, dataset_metadata.design_matrix)
+        return fit(model_reduced, reduced_matrix,
+                   f'Intron coverage | LRT {lrt_inputs[lrt_index].lrt_metadata_row["test_id"]}')
+
+    def refit_full_from_reduced(model_reduced: IntronCoverageModel,
+                                lrt_index: int) -> tuple[IntronCoverageModel, TrainingResults]:
+        model = build_full_model()
+        set_full_coverage_model_from_reduced(model, dataset_metadata.design_matrix,
+                                             model_reduced,
+                                             lrt_inputs[lrt_index].reduced_design_matrix)
+        return fit(model, dataset_metadata.design_matrix,
+                   'Intron coverage | full model restart')
+
+    fits = fit_full_and_reduced_models(fit_full_from_scratch=fit_full_from_scratch,
+                                       fit_reduced=fit_reduced,
+                                       refit_full_from_reduced=refit_full_from_reduced,
+                                       num_reduced_models=len(lrt_inputs))
+    model_full, results_full = fits.model_full, fits.results_full
+
+    # Derived from the full fit, so after the restart loop: a restart replaces the full model.
     model_param_df = model_full.get_param_df()
     model_param_df['loss_full_model'] = results_full.final_loss
     model_param_df['training_diverged_full_model'] = results_full.training_diverged
     model_param_df['training_converged_within_max_epochs_full_model'] = results_full.converged_within_max_epochs
 
-    coverage_loss_fn = CoverageLoss(num_position_coverage=coverage.shape[2]).to(device)
+    if not is_global_model:
+        coverage_loss_fn = CoverageLoss(num_position_coverage=coverage.shape[2]).to(device)
 
-    def intron_coverage_loss_by_params(params):
-        pi = functional_call(model_full, params, (dataset_metadata.design_matrix,))
-        return coverage_loss_fn(pi, coverage)
+        def intron_coverage_loss_by_params(params):
+            pi = functional_call(model_full, params, (dataset_metadata.design_matrix,))
+            return coverage_loss_fn(pi, coverage)
 
-    if compute_wald_test:
-        fisher_information_matrix = get_fisher_information_matrix(model_full, intron_coverage_loss_by_params)
+        fisher_information_matrix = get_fisher_information_matrix(model_full,
+                                                                  intron_coverage_loss_by_params)
         model_param_df = add_wald_test_results(model_param_df, fisher_information_matrix)
-    model_param_df = model_param_df.set_index(['parameter_type', 'feature_name', 'intron_name'], drop=False)
+
+    feature_names = dataset_metadata.feature_names
+    lfc_elong_over_splice = model_full.lfc_elong_over_splice.detach()[:, 0]
 
     test_results_list: list[dict] = []
-    for _, lrt_row in dataset_metadata.lrt_metadata.iterrows():
-        reduced_matrix = dataset_metadata.reduced_matrices[lrt_row['test_id']].to(device)
-        num_reduced_features = reduced_matrix.shape[1]
-        placeholder_names = [f'reduced_feature_{i}' for i in range(num_reduced_features)]
-
-        model_reduced = IntronCoverageModel(
-            feature_names=placeholder_names,
-            intron_names=intron_names,
-        ).to(device)
-
-        with torch.no_grad():
-            model_reduced.intercept_pi_logit.data.copy_(model_full.intercept_pi_logit.data)
-            if num_reduced_features > 0:
-                model_reduced.lfc_elong_over_splice.data.copy_(get_hot_start_reduced_lfc(
-                    dataset_metadata.design_matrix, reduced_matrix,
-                    model_full.lfc_elong_over_splice.detach()))
-        absorb_coverage_model_shift(model_reduced, model_full,
-                                    dataset_metadata.design_matrix, reduced_matrix)
-
-        optimizer_reduced = make_lbfgs_optimizer(model_reduced)
-        closure_reduced, evaluate_loss_reduced = _make_intron_coverage_closures(
-            model_reduced, optimizer_reduced, coverage, reduced_matrix,
-        )
-        model_reduced, results_reduced = train_model(
-            model_reduced, optimizer_reduced, closure_reduced, evaluate_loss_reduced,
-            verbose=verbose,
-        )
-
-        lfc_positive = 0.0 if pd.isna(lrt_row['lfc_column_positive']) else \
-            model_param_df.loc[(LFCParameter.ELONG_OVER_SPLICE,
-                                lrt_row['lfc_column_positive'], lfc_intron_name)]['value']
-        lfc_negative = 0.0 if pd.isna(lrt_row['lfc_column_negative']) else \
-            model_param_df.loc[(LFCParameter.ELONG_OVER_SPLICE,
-                                lrt_row['lfc_column_negative'], lfc_intron_name)]['value']
+    for lrt_index, lrt_input in enumerate(lrt_inputs):
+        lrt_row = lrt_input.lrt_metadata_row
+        results_reduced = fits.results_reduced[lrt_index]
 
         chi2_stat = 2 * (results_reduced.final_loss - results_full.final_loss)
         test_result = lrt_row.to_dict()
         test_result['tested_parameter'] = LFCParameter.ELONG_OVER_SPLICE
         test_result['intron_name'] = lfc_intron_name
-        test_result['lfc'] = lfc_positive - lfc_negative
+        test_result['lfc'] = (
+                get_lfc_of_column(lfc_elong_over_splice, feature_names,
+                                  lrt_row['lfc_column_positive'])
+                - get_lfc_of_column(lfc_elong_over_splice, feature_names,
+                                    lrt_row['lfc_column_negative']))
         test_result['loss_full_model'] = results_full.final_loss
         test_result['loss_reduced_model'] = results_reduced.final_loss
         test_result['chi2_test_statistics'] = chi2_stat
@@ -630,6 +959,7 @@ def get_intron_coverage_model_results(
         test_result['training_converged_within_max_epochs_reduced_model'] = results_reduced.converged_within_max_epochs
         test_result['num_epochs_full_model'] = results_full.num_epochs
         test_result['num_epochs_reduced_model'] = results_reduced.num_epochs
+        test_result['num_full_model_restarts'] = fits.num_full_model_restarts
         test_results_list.append(test_result)
 
     return model_param_df, pd.DataFrame(test_results_list), model_full.state_dict()
@@ -709,179 +1039,109 @@ def get_global_rna_kinetics_model_results(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     global_gene_data = global_gene_data.to(device)
     dataset_metadata = dataset_metadata.to(device)
-
-    model = GlobalRNAKineticsModel(
-        feature_names=dataset_metadata.feature_names,
-        gene_names=global_gene_data.gene_names,
-        intron_names=global_gene_data.intron_names,
-        gene_idx=global_gene_data.gene_idx,
-    ).to(device)
-    model.initialize_parameters(global_gene_data, dataset_metadata.library_sizes, dataset_metadata.design_matrix)
-
-    model, training_results = _train_two_stage(
-        model,
-        global_param_names={LFCParameter.ELONG_OVER_DEG, LFCParameter.SPLICE_OVER_DEG},
-        make_closures=lambda opt: _make_global_rna_kinetics_closures(model, opt, global_gene_data, dataset_metadata),
-        label='Global RNA kinetics | full model',
-        verbose=verbose,
-    )
-
     feature_names = dataset_metadata.feature_names
+
+    lrt_inputs: list[LRTInputs] = []
+    for _, lrt_row in dataset_metadata.lrt_metadata.iterrows():
+        reduced_matrix = dataset_metadata.reduced_matrices[lrt_row['test_id']]
+        for tested_ratio in GLOBAL_MODEL_TESTED_RATIOS:
+            lrt_inputs.append(LRTInputs(
+                lrt_metadata_row=lrt_row,
+                reduced_design_matrix=reduced_matrix,
+                lrt_specification=LRTSpecification(
+                    num_features_reduced_matrix=reduced_matrix.shape[1],
+                    tested_ratio=tested_ratio)))
+
+    def build_model(lrt_specification: Optional[LRTSpecification]) -> GlobalRNAKineticsModel:
+        return GlobalRNAKineticsModel(
+            feature_names=feature_names,
+            gene_names=global_gene_data.gene_names,
+            intron_names=global_gene_data.intron_names,
+            gene_idx=global_gene_data.gene_idx,
+            lrt_specification=lrt_specification,
+        ).to(device)
+
+    def fit(model: GlobalRNAKineticsModel,
+            reduced_matrix: Optional[torch.Tensor],
+            label: str) -> tuple[GlobalRNAKineticsModel, TrainingResults]:
+        global_param_names = {LFCParameter.ELONG_OVER_DEG, LFCParameter.SPLICE_OVER_DEG}
+        if reduced_matrix is not None:
+            global_param_names = global_param_names | {'reduced_lfc'}
+        return _train_two_stage(
+            model,
+            global_param_names=global_param_names,
+            make_closures=lambda opt: _make_global_rna_kinetics_closures(
+                model, opt, global_gene_data, dataset_metadata, reduced_matrix),
+            label=label,
+            verbose=verbose,
+        )
+
+    def fit_full_from_scratch() -> tuple[GlobalRNAKineticsModel, TrainingResults]:
+        model = build_model(None)
+        model.initialize_parameters(global_gene_data, dataset_metadata.library_sizes,
+                                   dataset_metadata.design_matrix)
+        return fit(model, None, 'Global RNA kinetics | full model')
+
+    def fit_reduced(model_full: GlobalRNAKineticsModel,
+                    lrt_index: int) -> tuple[GlobalRNAKineticsModel, TrainingResults]:
+        lrt_input = lrt_inputs[lrt_index]
+        model_reduced = build_model(lrt_input.lrt_specification)
+
+        set_reduced_rna_kinetics_model_from_full(
+            model_reduced, model_full, dataset_metadata.design_matrix,
+            lrt_input.reduced_design_matrix)
+        return fit(model_reduced, lrt_input.reduced_design_matrix,
+                   f'Global RNA kinetics | LRT {lrt_input.lrt_metadata_row["test_id"]} '
+                   f'| {lrt_input.lrt_specification.tested_ratio}')
+
+    def refit_full_from_reduced(model_reduced: GlobalRNAKineticsModel,
+                                lrt_index: int) -> tuple[GlobalRNAKineticsModel, TrainingResults]:
+        model = build_model(None)
+        set_full_global_rna_kinetics_model_from_reduced(
+            model, model_reduced, dataset_metadata.design_matrix,
+            lrt_inputs[lrt_index].reduced_design_matrix)
+        return fit(model, None, 'Global RNA kinetics | full model restart')
+
+    fits = fit_full_and_reduced_models(fit_full_from_scratch=fit_full_from_scratch,
+                                       fit_reduced=fit_reduced,
+                                       refit_full_from_reduced=refit_full_from_reduced,
+                                       num_reduced_models=len(lrt_inputs))
+    model, training_results = fits.model_full, fits.results_full
+
+    # Derived from the full fit, so after the restart loop: a restart replaces the full model.
     model_param_df = model.get_param_df()
     model_param_df['loss_full_model'] = training_results.final_loss
     model_param_df['training_diverged_full_model'] = training_results.training_diverged
     model_param_df['training_converged_within_max_epochs_full_model'] = training_results.converged_within_max_epochs
 
+    full_state = model.state_dict()
     test_results_list: list[dict] = []
-    for _, lrt_row in dataset_metadata.lrt_metadata.iterrows():
-        reduced_matrix = dataset_metadata.reduced_matrices[lrt_row['test_id']].to(device)
+    for lrt_index, lrt_input in enumerate(lrt_inputs):
+        lrt_row, lrt_specification = lrt_input.lrt_metadata_row, lrt_input.lrt_specification
+        results_reduced = fits.results_reduced[lrt_index]
+        lfc_of_tested_ratio = get_lfc_of_tested_ratio(full_state, lrt_specification.tested_ratio)
 
-        for tested_ratio in GLOBAL_MODEL_TESTED_RATIOS:
-            lrt_spec = LRTSpecification(
-                num_features_reduced_matrix=reduced_matrix.shape[1],
-                tested_ratio=tested_ratio,
-            )
-            model_reduced = GlobalRNAKineticsModel(
-                feature_names=feature_names,
-                gene_names=global_gene_data.gene_names,
-                intron_names=global_gene_data.intron_names,
-                gene_idx=global_gene_data.gene_idx,
-                lrt_specification=lrt_spec,
-            ).to(device)
-
-            full_state = model.state_dict()
-            reduced_state = model_reduced.state_dict()
-            for key in full_state:
-                reduced_state[key] = full_state[key]
-
-            lfc_of_tested_ratio = get_lfc_of_tested_ratio(full_state, tested_ratio)
-
-            if reduced_matrix.shape[1] > 0:
-                reduced_state['reduced_lfc'] = get_hot_start_reduced_lfc(
-                    dataset_metadata.design_matrix, reduced_matrix, lfc_of_tested_ratio)
-
-            model_reduced.load_state_dict(reduced_state)
-            absorb_read_class_shifts(model_reduced, model,
-                                     dataset_metadata.design_matrix, reduced_matrix)
-
-            model_reduced, results_reduced = _train_two_stage(
-                model_reduced,
-                global_param_names={LFCParameter.ELONG_OVER_DEG, LFCParameter.SPLICE_OVER_DEG,
-                                    'reduced_lfc'},
-                make_closures=lambda opt: _make_global_rna_kinetics_closures(
-                    model_reduced, opt, global_gene_data, dataset_metadata, reduced_matrix,
-                ),
-                label=f'Global RNA kinetics | LRT {lrt_row["test_id"]} | {tested_ratio}',
-                verbose=verbose,
-            )
-
-            def lfc_of_column(column_name) -> float:
-                if pd.isna(column_name):
-                    return 0.0
-                return lfc_of_tested_ratio[feature_names.index(column_name)].item()
-
-            lfc_positive = lfc_of_column(lrt_row['lfc_column_positive'])
-            lfc_negative = lfc_of_column(lrt_row['lfc_column_negative'])
-
-            chi2_stat = 2 * (results_reduced.final_loss - training_results.final_loss)
-            test_result = lrt_row.to_dict()
-            test_result['tested_parameter'] = tested_ratio
-            test_result['lfc'] = lfc_positive - lfc_negative
-            test_result['loss_full_model'] = training_results.final_loss
-            test_result['loss_reduced_model'] = results_reduced.final_loss
-            test_result['chi2_test_statistics'] = chi2_stat
-            test_result['p_value'] = 1 - stats.chi2.cdf(chi2_stat, df=lrt_row['lrt_df'])
-            test_result['training_diverged_reduced_model'] = results_reduced.training_diverged
-            test_result[
-                'training_converged_within_max_epochs_reduced_model'] = results_reduced.converged_within_max_epochs
-            test_result['num_epochs_full_model'] = training_results.num_epochs
-            test_result['num_epochs_reduced_model'] = results_reduced.num_epochs
-            test_results_list.append(test_result)
-
-    return model_param_df, pd.DataFrame(test_results_list)
-
-
-def get_global_intron_coverage_model_results(
-        coverage: torch.Tensor,
-        dataset_metadata: DatasetMetadata,
-        intron_names: list[str],
-        device: str = 'cpu',
-        verbose: bool = False,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    coverage = coverage.to(device)
-    dataset_metadata = dataset_metadata.to(device)
-
-    model_full = IntronCoverageModel(
-        feature_names=dataset_metadata.feature_names,
-        intron_names=intron_names,
-    ).to(device)
-    model_full.initialize_parameters(coverage)
-
-    model_full, results_full = _train_two_stage(
-        model_full,
-        global_param_names={LFCParameter.ELONG_OVER_SPLICE},
-        make_closures=lambda opt: _make_intron_coverage_closures(model_full, opt, coverage, dataset_metadata.design_matrix),
-        label='Global intron coverage | full model',
-        verbose=verbose,
-    )
-
-    model_param_df = model_full.get_param_df()
-    model_param_df['loss_full_model'] = results_full.final_loss
-    model_param_df['training_diverged_full_model'] = results_full.training_diverged
-    model_param_df['training_converged_within_max_epochs_full_model'] = results_full.converged_within_max_epochs
-    model_param_df = model_param_df.set_index(['parameter_type', 'feature_name', 'intron_name'], drop=False)
-
-    test_results_list: list[dict] = []
-    for _, lrt_row in dataset_metadata.lrt_metadata.iterrows():
-        reduced_matrix = dataset_metadata.reduced_matrices[lrt_row['test_id']].to(device)
-        num_reduced_features = reduced_matrix.shape[1]
-        placeholder_names = [f'reduced_feature_{i}' for i in range(num_reduced_features)]
-
-        model_reduced = IntronCoverageModel(
-            feature_names=placeholder_names,
-            intron_names=intron_names,
-        ).to(device)
-
-        with torch.no_grad():
-            model_reduced.intercept_pi_logit.data.copy_(model_full.intercept_pi_logit.data)
-            if num_reduced_features > 0:
-                model_reduced.lfc_elong_over_splice.data.copy_(get_hot_start_reduced_lfc(
-                    dataset_metadata.design_matrix, reduced_matrix,
-                    model_full.lfc_elong_over_splice.detach()))
-        absorb_coverage_model_shift(model_reduced, model_full,
-                                    dataset_metadata.design_matrix, reduced_matrix)
-
-        model_reduced, results_reduced = _train_two_stage(
-            model_reduced,
-            global_param_names={LFCParameter.ELONG_OVER_SPLICE},
-            make_closures=lambda opt: _make_intron_coverage_closures(model_reduced, opt, coverage, reduced_matrix),
-            label=f'Global intron coverage | LRT {lrt_row["test_id"]}',
-            verbose=verbose,
-        )
-
-        lfc_positive = 0.0 if pd.isna(lrt_row['lfc_column_positive']) else \
-            model_param_df.loc[(LFCParameter.ELONG_OVER_SPLICE,
-                                lrt_row['lfc_column_positive'], None)]['value']
-        lfc_negative = 0.0 if pd.isna(lrt_row['lfc_column_negative']) else \
-            model_param_df.loc[(LFCParameter.ELONG_OVER_SPLICE,
-                                lrt_row['lfc_column_negative'], None)]['value']
-
-        chi2_stat = 2 * (results_reduced.final_loss - results_full.final_loss)
+        chi2_stat = 2 * (results_reduced.final_loss - training_results.final_loss)
         test_result = lrt_row.to_dict()
-        test_result['tested_parameter'] = LFCParameter.ELONG_OVER_SPLICE
-        test_result['intron_name'] = None
-        test_result['lfc'] = lfc_positive - lfc_negative
-        test_result['loss_full_model'] = results_full.final_loss
+        test_result['tested_parameter'] = lrt_specification.tested_ratio
+        test_result['lfc'] = (
+                get_lfc_of_column(lfc_of_tested_ratio, feature_names,
+                                  lrt_row['lfc_column_positive'])
+                - get_lfc_of_column(lfc_of_tested_ratio, feature_names,
+                                    lrt_row['lfc_column_negative']))
+        test_result['loss_full_model'] = training_results.final_loss
         test_result['loss_reduced_model'] = results_reduced.final_loss
         test_result['chi2_test_statistics'] = chi2_stat
         test_result['p_value'] = 1 - stats.chi2.cdf(chi2_stat, df=lrt_row['lrt_df'])
         test_result['training_diverged_reduced_model'] = results_reduced.training_diverged
-        test_result['training_converged_within_max_epochs_reduced_model'] = results_reduced.converged_within_max_epochs
-        test_result['num_epochs_full_model'] = results_full.num_epochs
+        test_result[
+            'training_converged_within_max_epochs_reduced_model'] = results_reduced.converged_within_max_epochs
+        test_result['num_epochs_full_model'] = training_results.num_epochs
         test_result['num_epochs_reduced_model'] = results_reduced.num_epochs
+        test_result['num_full_model_restarts'] = fits.num_full_model_restarts
         test_results_list.append(test_result)
 
-    return model_param_df.reset_index(drop=True), pd.DataFrame(test_results_list)
+    return model_param_df, pd.DataFrame(test_results_list)
 
 
 def get_regularized_intron_coverage_model_results(

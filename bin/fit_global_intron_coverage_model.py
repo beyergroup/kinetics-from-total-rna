@@ -10,7 +10,7 @@ import torch
 from tqdm import tqdm
 
 from rna_kinetics.data import load_dataset_metadata
-from rna_kinetics.estimation import get_global_intron_coverage_model_results
+from rna_kinetics.estimation import get_intron_coverage_model_results
 
 # --- Dev block: comment out when running via Nextflow ---
 # results_folder = Path('/home/jakub/Desktop/c_elegans_test/results/')
@@ -83,14 +83,15 @@ if __name__ == "__main__":
         dtype=torch.float32,
     )
 
-    model_param_df, test_results_df = get_global_intron_coverage_model_results(
+    model_param_df, test_results_df, _ = get_intron_coverage_model_results(
         coverage=coverage,
         dataset_metadata=dataset_metadata,
         intron_names=intron_names,
+        is_global_model=True,
         verbose=True,
     )
 
-    model_param_df.reset_index(drop=True).to_csv(
+    model_param_df.to_csv(
         args.output_folder / 'model_parameters.tsv', sep='\t', index=False
     )
     test_results_df.to_csv(args.output_folder / 'test_results.tsv', sep='\t', index=False)
