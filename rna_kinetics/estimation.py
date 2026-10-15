@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable, NamedTuple, Optional, OrderedDict
+from typing import Callable, Iterator, NamedTuple, Optional, OrderedDict
 
 import numpy as np
 import pandas as pd
@@ -35,6 +35,22 @@ class CacheForRegularization:
     intron_specific_lfc: Optional[bool] = None  # RNAKineticsModel only: LFC parameter shape
 
 
+class ModelFitResults(NamedTuple):
+    """
+    Everything one fit of a full model reports.
+
+    `model_parameters` has one row per model parameter, in the order the Fisher information
+    indexes them. `ratio_lfcs` has one row per rate ratio and design column, which is the shape
+    the empirical Bayes step consumes, since the L2 penalty acts per column. `test_results` has
+    one row per likelihood ratio test. `state_dict_full_model` is the hot start cached for the
+    regularized refit.
+    """
+    model_parameters: pd.DataFrame
+    ratio_lfcs: pd.DataFrame
+    test_results: pd.DataFrame
+    state_dict_full_model: StateDict
+
+
 class LRTInputs(NamedTuple):
     """
     Everything needed to run and report one likelihood ratio test.
@@ -53,6 +69,26 @@ def _get_lfc_without_intron_axis(lfc: torch.Tensor, intron_index: int) -> torch.
     return lfc if lfc.dim() == 1 else lfc[:, intron_index]
 
 
+def get_lfc_of_lfc_difference(state_dict: StateDict,
+                              ratio_as_lfc_difference: tuple[str, Optional[str]],
+                              intron_index: int = 0) -> torch.Tensor:
+    """
+    The fitted LFC of one rate ratio, as a (num_features,) vector.
+
+    The ratio arrives already decomposed into one or two LFC parameters, which is what lets the
+    intron coverage model use this as well: its single LFC is a ratio in its own right and has no
+    entry in `RATIO_AS_LFC_DIFFERENCE`.
+
+    The elongation and splicing LFCs may carry an intron axis, in which case the given intron's
+    column is taken; initiation never does.
+    """
+    numerator_attribute, denominator_attribute = ratio_as_lfc_difference
+    lfc = _get_lfc_without_intron_axis(state_dict[numerator_attribute], intron_index)
+    if denominator_attribute is not None:
+        lfc = lfc - _get_lfc_without_intron_axis(state_dict[denominator_attribute], intron_index)
+    return lfc
+
+
 def get_lfc_of_tested_ratio(state_dict: StateDict,
                             tested_ratio: TestedRatio,
                             intron_index: int = 0) -> torch.Tensor:
@@ -60,18 +96,13 @@ def get_lfc_of_tested_ratio(state_dict: StateDict,
     The fitted LFC of the rate ratio under test, as a (num_features,) vector.
 
     Three of the six ratios are single parameters; the other three are a difference of two, which
-    is well defined because both are measured against degradation and that term cancels. The
-    elongation and splicing LFCs may carry an intron axis, in which case the tested intron's
-    column is taken; initiation never does.
+    is well defined because both are measured against degradation and that term cancels.
 
     Used both to hot start the reduced model and to report the tested ratio's effect size, neither
     of which can read a single parameter for the three unparametrized ratios.
     """
-    numerator_attribute, denominator_attribute = RATIO_AS_LFC_DIFFERENCE[tested_ratio]
-    lfc = _get_lfc_without_intron_axis(state_dict[numerator_attribute], intron_index)
-    if denominator_attribute is not None:
-        lfc = lfc - _get_lfc_without_intron_axis(state_dict[denominator_attribute], intron_index)
-    return lfc
+    return get_lfc_of_lfc_difference(state_dict, RATIO_AS_LFC_DIFFERENCE[tested_ratio],
+                                     intron_index)
 
 
 def get_lfc_of_column(lfc_of_tested_ratio: torch.Tensor,
@@ -619,18 +650,20 @@ def add_wald_test_results(df_param: pd.DataFrame,
     return df_param
 
 
-def get_contrast_of_tested_ratio(model: nn.Module,
-                                 ratio_as_lfc_difference: tuple[str, Optional[str]],
-                                 lrt_metadata_row: pd.Series,
-                                 intron_index: int = 0) -> dict[int, float]:
+def get_contrast_of_ratio(model: nn.Module,
+                          ratio_as_lfc_difference: tuple[str, Optional[str]],
+                          lfc_column_positive,
+                          lfc_column_negative,
+                          intron_index: int = 0) -> dict[int, float]:
     """
-    The reported effect size of one tested ratio, written as a combination of model parameters.
+    One reported LFC of a rate ratio, written as a combination of model parameters.
 
     Keys are rows of the flattened Fisher information and values their coefficients, so the dot
-    product with the fitted parameters is the `lfc` column of the test results. It is assembled
-    from the same two pieces as that column: the ratio as a difference of one or two LFC
-    parameters, and the contrast as a difference of two design columns. A design column that is
-    absent contributes nothing, exactly as in `get_lfc_of_column`.
+    product with the fitted parameters is the LFC itself. It is assembled from the same two pieces
+    as that LFC: the ratio as a difference of one or two LFC parameters, and the comparison as a
+    difference of two design columns. A column that is absent contributes nothing, exactly as in
+    `get_lfc_of_column`, which is how a single column is asked for -- pass it as the positive one
+    and leave the negative NaN.
 
     `model` has to be the full model. A reduced one holds the tested ratio in `reduced_lfc`, which
     has neither a row in the parameter dataframe nor a standard error to report.
@@ -653,8 +686,8 @@ def get_contrast_of_tested_ratio(model: nn.Module,
     for lfc_attribute, ratio_sign in ((numerator_attribute, 1.0), (denominator_attribute, -1.0)):
         if lfc_attribute is None:
             continue
-        for column_name, column_sign in ((lrt_metadata_row['lfc_column_positive'], 1.0),
-                                         (lrt_metadata_row['lfc_column_negative'], -1.0)):
+        for column_name, column_sign in ((lfc_column_positive, 1.0),
+                                         (lfc_column_negative, -1.0)):
             row = get_row(lfc_attribute, column_name)
             if row is not None:
                 contrast[row] = contrast.get(row, 0.0) + ratio_sign * column_sign
@@ -697,6 +730,58 @@ def get_contrast_wald_results(parameter_covariance: Optional[ParameterCovariance
             'z_score': z_score,
             'p_value_wald': 2 * (1 - stats.norm.cdf(np.abs(z_score))),
             'lfc_identifiable': True}
+
+
+class RatioToReport(NamedTuple):
+    """
+    One rate ratio as it should appear in `ratio_lfcs`, for one intron or shared across them.
+
+    `lfc_difference` is the ratio decomposed into one or two LFC parameters, as
+    `RATIO_AS_LFC_DIFFERENCE` gives it for the per-gene model. `intron_name` is what the row is
+    labelled with and `intron_index` which column of an intron-specific LFC to read; both are
+    unused for a ratio the model shares across introns.
+    """
+    ratio: str
+    lfc_difference: tuple[str, Optional[str]]
+    intron_name: Optional[str] = None
+    intron_index: int = 0
+
+
+def get_ratio_lfc_df(model: nn.Module,
+                     parameter_covariance: Optional[ParameterCovariance],
+                     ratios_to_report: list[RatioToReport]) -> pd.DataFrame:
+    """
+    Every rate ratio's LFC per design column, with its Wald standard error.
+
+    One row per ratio, intron and design column. Unlike the test results, which report a contrast
+    between two design columns, a row here is a single column's own coefficient. That is the
+    quantity the L2 penalty acts on, so it is also the one a prior has to be fitted for, and it is
+    why the three ratios that are not parameters appear here on the same footing as the three that
+    are -- their standard errors need the whole inverse Fisher information rather than one
+    diagonal entry of it.
+
+    z scores and p values are deliberately left out: a per-column Wald test is not a result the
+    pipeline reports, and the tested comparisons already carry theirs in the test results.
+    """
+    state_dict = model.state_dict()
+    rows: list[dict] = []
+    for ratio_to_report in ratios_to_report:
+        lfc_of_ratio = get_lfc_of_lfc_difference(state_dict, ratio_to_report.lfc_difference,
+                                                 ratio_to_report.intron_index)
+        for feature_index, feature_name in enumerate(model.feature_names):
+            contrast = get_contrast_of_ratio(model, ratio_to_report.lfc_difference,
+                                             lfc_column_positive=feature_name,
+                                             lfc_column_negative=np.nan,
+                                             intron_index=ratio_to_report.intron_index)
+            lfc = lfc_of_ratio[feature_index].item()
+            wald_results = get_contrast_wald_results(parameter_covariance, contrast, lfc)
+            rows.append({'ratio': ratio_to_report.ratio,
+                         'intron_name': ratio_to_report.intron_name,
+                         'feature_name': feature_name,
+                         'lfc': lfc,
+                         'lfc_se': wald_results['lfc_se'],
+                         'lfc_identifiable': wald_results['lfc_identifiable']})
+    return pd.DataFrame(rows)
 
 
 # A reduced model landing below the full model means the full fit stopped somewhere worse, since
@@ -788,6 +873,24 @@ def fit_full_and_reduced_models(
                               num_full_model_restarts=num_full_model_restarts)
 
 
+def _iter_reported_ratios(intron_names: list[str],
+                          intron_specific_lfc: bool
+                          ) -> Iterator[tuple[TestedRatio, Optional[str], int]]:
+    """
+    Every (ratio, intron) combination the per-gene model reports, with the intron's index.
+
+    Every ratio except init/deg involves elongation or splicing, so it is reported one intron at a
+    time whenever those LFCs are intron-specific. Shared by the LRT enumeration and the
+    `ratio_lfcs` table so the two cannot describe different sets of ratios.
+    """
+    for tested_ratio in TestedRatio:
+        if intron_specific_lfc and tested_ratio != TestedRatio.INIT_OVER_DEG:
+            yield from ((tested_ratio, intron_name, intron_index)
+                        for intron_index, intron_name in enumerate(intron_names))
+        else:
+            yield tested_ratio, None, 0
+
+
 def _get_tested_intron_index(gene_data: GeneData, lrt_specification: LRTSpecification) -> int:
     """Position of the tested intron, or 0 when the tested ratio is shared across the gene."""
     if lrt_specification.tested_intron is None:
@@ -799,26 +902,23 @@ def get_rna_kinetics_model_results(gene_data: GeneData,
                                    dataset_metadata: DatasetMetadata,
                                    intron_specific_lfc: bool,
                                    device='cpu'
-                                   ) -> tuple[pd.DataFrame, pd.DataFrame, StateDict]:
+                                   ) -> ModelFitResults:
     gene_data = gene_data.to(device)
     dataset_metadata = dataset_metadata.to(device)
 
     # Enumerated up front so the reduced models can be indexed by position by the restart loop.
-    # Every ratio except init/deg involves elongation or splicing, so it is tested one intron at a
-    # time whenever those LFCs are intron-specific.
     lrt_inputs: list[LRTInputs] = []
     for _, lrt_metadata_row in dataset_metadata.lrt_metadata.iterrows():
         reduced_design_matrix = dataset_metadata.reduced_matrices[lrt_metadata_row['test_id']]
-        for tested_ratio in TestedRatio:
-            tests_single_intron = intron_specific_lfc and tested_ratio != TestedRatio.INIT_OVER_DEG
-            for intron_name in (gene_data.intron_names if tests_single_intron else [None]):
-                lrt_inputs.append(LRTInputs(
-                    lrt_metadata_row=lrt_metadata_row,
-                    reduced_design_matrix=reduced_design_matrix,
-                    lrt_specification=LRTSpecification(
-                        num_features_reduced_matrix=reduced_design_matrix.shape[1],
-                        tested_ratio=tested_ratio,
-                        tested_intron=intron_name)))
+        for tested_ratio, intron_name, _ in _iter_reported_ratios(gene_data.intron_names,
+                                                                  intron_specific_lfc):
+            lrt_inputs.append(LRTInputs(
+                lrt_metadata_row=lrt_metadata_row,
+                reduced_design_matrix=reduced_design_matrix,
+                lrt_specification=LRTSpecification(
+                    num_features_reduced_matrix=reduced_design_matrix.shape[1],
+                    tested_ratio=tested_ratio,
+                    tested_intron=intron_name)))
 
     def build_full_model() -> RNAKineticsModel:
         return RNAKineticsModel(feature_names=dataset_metadata.feature_names,
@@ -897,6 +997,17 @@ def get_rna_kinetics_model_results(gene_data: GeneData,
     parameter_covariance = get_parameter_covariance(fisher_information_matrix)
     model_param_df = add_wald_test_results(model_param_df, parameter_covariance)
 
+    ratio_lfc_df = get_ratio_lfc_df(
+        model_full, parameter_covariance,
+        [RatioToReport(ratio=tested_ratio,
+                       lfc_difference=RATIO_AS_LFC_DIFFERENCE[tested_ratio],
+                       intron_name=intron_name,
+                       intron_index=intron_index)
+         for tested_ratio, intron_name, intron_index
+         in _iter_reported_ratios(gene_data.intron_names, intron_specific_lfc)])
+    ratio_lfc_df['gene_name'] = gene_data.gene_name
+    ratio_lfc_df['training_diverged_full_model'] = results_full.training_diverged
+
     state_dict_model_full = model_full.state_dict()
     feature_names = dataset_metadata.feature_names
     test_results_list: list[dict] = []
@@ -923,10 +1034,11 @@ def get_rna_kinetics_model_results(gene_data: GeneData,
                                     test_result['lfc_column_negative']))
         test_result.update(get_contrast_wald_results(
             parameter_covariance,
-            get_contrast_of_tested_ratio(model_full,
-                                         RATIO_AS_LFC_DIFFERENCE[lrt_specification.tested_ratio],
-                                         lrt_input.lrt_metadata_row,
-                                         tested_intron_index),
+            get_contrast_of_ratio(model_full,
+                                  RATIO_AS_LFC_DIFFERENCE[lrt_specification.tested_ratio],
+                                  test_result['lfc_column_positive'],
+                                  test_result['lfc_column_negative'],
+                                  tested_intron_index),
             test_result['lfc']))
         test_result['loss_full_model'] = results_full.final_loss
         test_result['loss_reduced_model'] = results_reduced.final_loss
@@ -937,8 +1049,10 @@ def get_rna_kinetics_model_results(gene_data: GeneData,
         test_result['num_full_model_restarts'] = fits.num_full_model_restarts
         test_results_list.append(test_result)
 
-    test_results_df = pd.DataFrame(test_results_list)
-    return model_param_df, test_results_df, state_dict_model_full
+    return ModelFitResults(model_parameters=model_param_df,
+                           ratio_lfcs=ratio_lfc_df,
+                           test_results=pd.DataFrame(test_results_list),
+                           state_dict_full_model=state_dict_model_full)
 
 
 def get_regularized_rna_kinetics_model_results(gene_data: GeneData,
@@ -991,7 +1105,7 @@ def get_intron_coverage_model_results(
         is_global_model: bool = False,
         device: str = 'cpu',
         verbose: bool = False,
-) -> tuple[pd.DataFrame, pd.DataFrame, StateDict]:
+) -> ModelFitResults:
     """
     Fit IntronCoverageModel to the given introns and run its likelihood ratio tests.
 
@@ -1085,6 +1199,15 @@ def get_intron_coverage_model_results(
         parameter_covariance = get_parameter_covariance(fisher_information_matrix)
         model_param_df = add_wald_test_results(model_param_df, parameter_covariance)
 
+    # A one-dimensional ratio space: the model's single LFC is itself a rate ratio, so this table
+    # has one row per design column and no standard errors for the global model.
+    ratio_lfc_df = get_ratio_lfc_df(
+        model_full, parameter_covariance,
+        [RatioToReport(ratio=LFCParameter.ELONG_OVER_SPLICE,
+                       lfc_difference=(LFCParameter.ELONG_OVER_SPLICE, None),
+                       intron_name=lfc_intron_name)])
+    ratio_lfc_df['training_diverged_full_model'] = results_full.training_diverged
+
     feature_names = dataset_metadata.feature_names
     lfc_elong_over_splice = model_full.lfc_elong_over_splice.detach()[:, 0]
 
@@ -1107,9 +1230,9 @@ def get_intron_coverage_model_results(
             # rather than a column of nulls.
             test_result.update(get_contrast_wald_results(
                 parameter_covariance,
-                get_contrast_of_tested_ratio(model_full,
-                                             (LFCParameter.ELONG_OVER_SPLICE, None),
-                                             lrt_row),
+                get_contrast_of_ratio(model_full, (LFCParameter.ELONG_OVER_SPLICE, None),
+                                      lrt_row['lfc_column_positive'],
+                                      lrt_row['lfc_column_negative']),
                 test_result['lfc']))
         test_result['loss_full_model'] = results_full.final_loss
         test_result['loss_reduced_model'] = results_reduced.final_loss
@@ -1122,7 +1245,10 @@ def get_intron_coverage_model_results(
         test_result['num_full_model_restarts'] = fits.num_full_model_restarts
         test_results_list.append(test_result)
 
-    return model_param_df, pd.DataFrame(test_results_list), model_full.state_dict()
+    return ModelFitResults(model_parameters=model_param_df,
+                           ratio_lfcs=ratio_lfc_df,
+                           test_results=pd.DataFrame(test_results_list),
+                           state_dict_full_model=model_full.state_dict())
 
 
 def _make_global_rna_kinetics_closures(

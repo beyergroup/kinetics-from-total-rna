@@ -89,6 +89,7 @@ process FitModel {
 
     output:
     path("model_parameters*.tsv"), emit: model_parameters_chunk
+    path("ratio_lfcs*.tsv"), emit: ratio_lfcs_chunk
     path("test_results*.tsv"), emit: test_results_chunk
     tuple path("cache_for_regularization*.pt"), val(chunk_name), emit: cache_for_regularization
 
@@ -133,6 +134,7 @@ process FitGeneIntronCoverageModel {
 
     output:
     path("model_parameters*.tsv"), emit: model_parameters_chunk
+    path("ratio_lfcs*.tsv"), emit: ratio_lfcs_chunk
     path("test_results*.tsv"), emit: test_results_chunk
     tuple path("cache_for_regularization*.pt"), val(chunk_name), emit: cache_for_regularization
 
@@ -169,6 +171,7 @@ process FitIntronCoverageModel {
 
     output:
     path("model_parameters*.tsv"), emit: model_parameters_chunk
+    path("ratio_lfcs*.tsv"), emit: ratio_lfcs_chunk
     path("test_results*.tsv"), emit: test_results_chunk
     tuple path("cache_for_regularization*.pt"), val(chunk_name), emit: cache_for_regularization
 
@@ -267,12 +270,14 @@ process MergeModelResultChunks {
 
     input:
     path model_parameters_chunks
+    path ratio_lfcs_chunks
     path test_results_chunks
     val model_type_subfolder
 
     output:
     path("test_results_before_regularization.tsv"), emit: test_results_before_regularization
     path("model_parameters.tsv"), emit: model_parameters
+    path("ratio_lfcs.tsv"), emit: ratio_lfcs
 
     script:
     """
@@ -443,6 +448,7 @@ workflow rna_kinetics_model_subworkflow {
 
         def model_result_merged = MergeModelResultChunks(
             fit_model_output.model_parameters_chunk.collect(),
+            fit_model_output.ratio_lfcs_chunk.collect(),
             fit_model_output.test_results_chunk.collect(),
             model_subfolder
         )
@@ -499,6 +505,7 @@ workflow intron_specific_rna_kinetics_model_subworkflow {
 
         def model_result_merged = MergeModelResultChunks(
             fit_model_output.model_parameters_chunk.collect(),
+            fit_model_output.ratio_lfcs_chunk.collect(),
             fit_model_output.test_results_chunk.collect(),
             model_subfolder
         )
@@ -554,6 +561,7 @@ workflow gene_specific_intron_coverage_model_subworkflow {
 
         def model_result_merged = MergeModelResultChunks(
             fit_model_output.model_parameters_chunk.collect(),
+            fit_model_output.ratio_lfcs_chunk.collect(),
             fit_model_output.test_results_chunk.collect(),
             model_subfolder
         )
@@ -601,6 +609,7 @@ workflow intron_specific_intron_coverage_model_subworkflow {
 
         def model_result_merged = MergeModelResultChunks(
             fit_model_output.model_parameters_chunk.collect(),
+            fit_model_output.ratio_lfcs_chunk.collect(),
             fit_model_output.test_results_chunk.collect(),
             model_subfolder
         )
