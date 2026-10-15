@@ -39,11 +39,13 @@ test_results <- test_results |>
   mutate(
     l2fc_unregularized = lfc / log(2),
     l2fc_regularized   = lfc_regularized / log(2),
+    # Python reports the Wald standard error on the natural-log scale of the LFC itself.
+    l2fc_se            = lfc_se / log(2),
   ) |>
   rename(lfc_unregularized = lfc) |>
   select(gene_name, intron_name, parameter_type, variable, group_1, group_2,
-         l2fc_unregularized, l2fc_regularized, p_value, chi2_test_statistics,
-         test_id, test_type, everything())
+         l2fc_unregularized, l2fc_regularized, l2fc_se, p_value, p_value_wald,
+         chi2_test_statistics, test_id, test_type, everything())
 
 write_tsv(test_results, file.path(output_folder, "test_results.tsv"))
 

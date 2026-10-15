@@ -476,10 +476,30 @@ def _make_intron_coverage_closures(
     return _make_closures(optimizer, _compute_loss)
 
 
-def flatten_hessian_dict(hessian_dict: dict[str, dict[str, torch.Tensor]],
-                         model_parameters: dict[str, torch.Tensor]) -> torch.Tensor:
+def get_flat_parameter_offsets(model_parameters: dict[str, torch.Tensor]) -> dict[str, int]:
     """
-    Flatten the per-parameter-pair Hessian blocks into a single matrix.
+    Where each parameter's elements start once all parameters are concatenated into one vector.
+
+    That vector indexes the rows of the flattened Fisher information and of the parameter
+    dataframe alike, which is what lets a contrast name the rows it combines.
+    """
+    parameter_offsets: dict[str, int] = {}
+    offset = 0
+    for name, parameter in model_parameters.items():
+        parameter_offsets[name] = offset
+        offset += parameter.numel()
+    return parameter_offsets
+
+
+def build_hessian_matrix_from_dict(hessian_dict: dict[str, dict[str, torch.Tensor]],
+                                   model_parameters: dict[str, torch.Tensor]) -> torch.Tensor:
+    """
+    Assemble the per-parameter-pair Hessian blocks into a single matrix.
+
+    `torch.func.hessian` returns a nested dict mirroring the parameter tree, each block
+    carrying the natural shape of both parameters it relates. Every block is reshaped down
+    to two axes and placed at its offset, which is what the rank-revealing QR and the
+    inverse downstream need.
 
     Row/column order is load-bearing: `add_wald_test_results` maps rows of this matrix onto rows
     of the parameter dataframe by position, so parameters are concatenated in `named_parameters()`
@@ -487,8 +507,7 @@ def flatten_hessian_dict(hessian_dict: dict[str, dict[str, torch.Tensor]],
     """
     param_names = list(model_parameters.keys())
     param_sizes = {name: model_parameters[name].numel() for name in param_names}
-    param_offsets = {name: sum(param_sizes[n] for n in param_names[:i])
-                     for i, name in enumerate(param_names)}
+    param_offsets = get_flat_parameter_offsets(model_parameters)
     total_param_size = sum(param_sizes.values())
     device = next(iter(model_parameters.values())).device
     hessian_matrix = torch.zeros((total_param_size, total_param_size), device=device)
@@ -507,55 +526,177 @@ def flatten_hessian_dict(hessian_dict: dict[str, dict[str, torch.Tensor]],
 
 def get_fisher_information_matrix(model: nn.Module,
                                   loss_fn: Callable[[StateDict], torch.Tensor]) -> torch.Tensor:
+    """
+    The observed Fisher information at the model's current parameters.
+
+    This is the Hessian of `loss_fn`, which is the same thing only because the loss is a negative
+    log-likelihood. Pass an unregularized loss: with an L2 penalty in it the Hessian is that of
+    the penalized objective and no longer an information matrix, so a Wald test built on it would
+    understate the uncertainty. "Observed" because it is evaluated on this dataset at the fitted
+    parameters, rather than being an expectation over datasets.
+
+    Everything below this function calls the result a Hessian, everything above it the Fisher
+    information.
+    """
     model_parameters = dict(model.named_parameters())
     hessian_dict = hessian(loss_fn)(model_parameters)
-    hessian_matrix = flatten_hessian_dict(hessian_dict, model_parameters)
+    hessian_matrix = build_hessian_matrix_from_dict(hessian_dict, model_parameters)
     return hessian_matrix
 
 
-def add_wald_test_results(df_param: pd.DataFrame, hessian_matrix: torch.Tensor) -> pd.DataFrame:
+class ParameterCovariance(NamedTuple):
+    """
+    The inverse Fisher information, restricted to the parameters that are identifiable.
+
+    `matrix` inverts the identifiable submatrix, and `rows` says which row of the full Fisher
+    information each of its rows came from, which is also a row of the parameter dataframe since
+    the two share an order.
+
+    Unidentifiable parameters are left out rather than given an infinite variance: the information
+    is singular in their directions, so they have no standard error, and neither has any contrast
+    involving them. Inverting the submatrix is also what makes a contrast on a single parameter
+    come out with exactly that parameter's own standard error.
+    """
+    matrix: torch.Tensor
+    rows: np.ndarray
+    num_parameters: int
+
+
+def get_parameter_covariance(
+        fisher_information_matrix: torch.Tensor) -> Optional[ParameterCovariance]:
+    """
+    Invert the Fisher information on the subspace where it has full rank.
+
+    None when it has non-finite entries, which leaves no Wald test at all, neither for the
+    individual parameters nor for a contrast of them.
+    """
+    if not torch.isfinite(fisher_information_matrix).all().item():
+        return None
+
+    rank = torch.linalg.matrix_rank(fisher_information_matrix).item()
+
+    # Rank-revealing QR is currently not available in Pytorch (see https://github.com/pytorch/pytorch/issues/10454),
+    # so we are going to use SciPy implementation.
+    _, _, qr_pivots = scipy.linalg.qr(fisher_information_matrix.cpu().numpy(), pivoting=True)
+    identifiable_indices = np.sort(qr_pivots[:rank])
+    identifiable_subset = fisher_information_matrix[identifiable_indices][:, identifiable_indices]
+
+    # identifiable_subset should have a full rank by the way it is constructed:
+    # assert identifiable_subset.shape[0] == torch.linalg.matrix_rank(identifiable_subset)
+
+    return ParameterCovariance(matrix=torch.linalg.pinv(identifiable_subset).cpu(),
+                               rows=identifiable_indices,
+                               num_parameters=fisher_information_matrix.shape[0])
+
+
+def add_wald_test_results(df_param: pd.DataFrame,
+                          parameter_covariance: Optional[ParameterCovariance]) -> pd.DataFrame:
     """
     Adds results of the Wald test to the dataframe with model parameters.
     """
     df_param = df_param.copy()
-    if torch.isfinite(hessian_matrix).all().item():
-        df_param['loss_hessian_is_finite'] = True
-    else:
-        df_param['SE'] = np.nan
-        df_param['z_score'] = np.nan
-        df_param['p_value_wald'] = np.nan
-        df_param['identifiable'] = False
-        df_param['loss_hessian_is_finite'] = False
-        return df_param
-
-    rank = torch.linalg.matrix_rank(hessian_matrix).item()
-
-    # Rank-revealing QR is currently not available in Pytorch (see https://github.com/pytorch/pytorch/issues/10454),
-    # so we are going to use SciPy implementation.
-    _, _, qr_pivots = scipy.linalg.qr(hessian_matrix.cpu().numpy(), pivoting=True)
-    identifiable_indices = np.sort(qr_pivots[:rank])
-    hessian_subset = hessian_matrix[identifiable_indices][:, identifiable_indices]
-
-    if not set(qr_pivots) == set(df_param.index):
-        raise ValueError(f'Unexpected value of df_param.index: {df_param=}')
-
-    # hessian_subset should have a full rank by the way it is constructed:
-    # assert hessian_subset.shape[0] == torch.linalg.matrix_rank(hessian_subset)
-
-    cov_matrix = torch.linalg.pinv(hessian_subset).cpu()
-    standard_errors = torch.sqrt(torch.clamp(torch.diag(cov_matrix), min=0.0)).numpy()
-
     df_param['SE'] = np.nan
     df_param['z_score'] = np.nan
     df_param['p_value_wald'] = np.nan
-    df_param['identifiable'] = df_param.index.isin(identifiable_indices)
+    df_param['identifiable'] = False
+    df_param['loss_hessian_is_finite'] = parameter_covariance is not None
+    if parameter_covariance is None:
+        return df_param
 
+    if not df_param.index.equals(pd.RangeIndex(parameter_covariance.num_parameters)):
+        raise ValueError(f'Unexpected value of df_param.index: {df_param=}')
+
+    identifiable_indices = parameter_covariance.rows
+    standard_errors = torch.sqrt(
+        torch.clamp(torch.diag(parameter_covariance.matrix), min=0.0)).numpy()
+
+    df_param['identifiable'] = df_param.index.isin(identifiable_indices)
     df_param.loc[identifiable_indices, 'SE'] = standard_errors
     df_param.loc[identifiable_indices, 'z_score'] = df_param.loc[identifiable_indices, 'value'] / standard_errors
     df_param.loc[identifiable_indices, 'p_value_wald'] = 2 * (
             1 - stats.norm.cdf(np.abs(df_param.loc[identifiable_indices, 'z_score'])))
 
     return df_param
+
+
+def get_contrast_of_tested_ratio(model: nn.Module,
+                                 ratio_as_lfc_difference: tuple[str, Optional[str]],
+                                 lrt_metadata_row: pd.Series,
+                                 intron_index: int = 0) -> dict[int, float]:
+    """
+    The reported effect size of one tested ratio, written as a combination of model parameters.
+
+    Keys are rows of the flattened Fisher information and values their coefficients, so the dot
+    product with the fitted parameters is the `lfc` column of the test results. It is assembled
+    from the same two pieces as that column: the ratio as a difference of one or two LFC
+    parameters, and the contrast as a difference of two design columns. A design column that is
+    absent contributes nothing, exactly as in `get_lfc_of_column`.
+
+    `model` has to be the full model. A reduced one holds the tested ratio in `reduced_lfc`, which
+    has neither a row in the parameter dataframe nor a standard error to report.
+    """
+    model_parameters = dict(model.named_parameters())
+    parameter_offsets = get_flat_parameter_offsets(model_parameters)
+
+    def get_row(lfc_attribute: str, column_name) -> Optional[int]:
+        if pd.isna(column_name):
+            return None
+        lfc = model_parameters[lfc_attribute]
+        feature_index = model.feature_names.index(column_name)
+        # Mirrors `_get_lfc_without_intron_axis`: the elongation and splicing LFCs carry a second
+        # axis, over the introns or a singleton, while initiation never does.
+        index = (feature_index,) if lfc.dim() == 1 else (feature_index, intron_index)
+        return parameter_offsets[lfc_attribute] + int(np.ravel_multi_index(index, lfc.shape))
+
+    numerator_attribute, denominator_attribute = ratio_as_lfc_difference
+    contrast: dict[int, float] = {}
+    for lfc_attribute, ratio_sign in ((numerator_attribute, 1.0), (denominator_attribute, -1.0)):
+        if lfc_attribute is None:
+            continue
+        for column_name, column_sign in ((lrt_metadata_row['lfc_column_positive'], 1.0),
+                                         (lrt_metadata_row['lfc_column_negative'], -1.0)):
+            row = get_row(lfc_attribute, column_name)
+            if row is not None:
+                contrast[row] = contrast.get(row, 0.0) + ratio_sign * column_sign
+    return contrast
+
+
+def get_contrast_wald_results(parameter_covariance: Optional[ParameterCovariance],
+                              contrast: dict[int, float],
+                              lfc: float) -> dict[str, float | bool]:
+    """
+    Wald test of one contrast, as the columns reported next to its effect size.
+
+    The standard error is sqrt(c' Sigma c) over the contrast's own entries of the inverse Fisher
+    information, so a contrast on a single parameter reproduces the standard error reported for
+    that parameter in the parameter table. A contrast touching an unidentifiable parameter has no
+    standard error at all and is reported as not identifiable, which is the conservative reading
+    when the ratio combines two parameters and only one of them is identifiable.
+    """
+    not_identifiable = {'lfc_se': np.nan,
+                        'z_score': np.nan,
+                        'p_value_wald': np.nan,
+                        'lfc_identifiable': False}
+    if parameter_covariance is None:
+        return not_identifiable
+
+    position_in_covariance = {row: position
+                              for position, row in enumerate(parameter_covariance.rows)}
+    rows = sorted(contrast)
+    if not all(row in position_in_covariance for row in rows):
+        return not_identifiable
+
+    positions = [position_in_covariance[row] for row in rows]
+    weights = torch.tensor([contrast[row] for row in rows],
+                           dtype=parameter_covariance.matrix.dtype)
+    variance = weights @ parameter_covariance.matrix[positions][:, positions] @ weights
+    standard_error = torch.sqrt(torch.clamp(variance, min=0.0)).item()
+
+    z_score = lfc / standard_error if standard_error > 0 else np.nan
+    return {'lfc_se': standard_error,
+            'z_score': z_score,
+            'p_value_wald': 2 * (1 - stats.norm.cdf(np.abs(z_score))),
+            'lfc_identifiable': True}
 
 
 # A reduced model landing below the full model means the full fit stopped somewhere worse, since
@@ -753,7 +894,8 @@ def get_rna_kinetics_model_results(gene_data: GeneData,
                                 predicted_pi=predicted_pi)
 
     fisher_information_matrix = get_fisher_information_matrix(model_full, rna_kinetics_loss_by_params)
-    model_param_df = add_wald_test_results(model_param_df, fisher_information_matrix)
+    parameter_covariance = get_parameter_covariance(fisher_information_matrix)
+    model_param_df = add_wald_test_results(model_param_df, parameter_covariance)
 
     state_dict_model_full = model_full.state_dict()
     feature_names = dataset_metadata.feature_names
@@ -761,11 +903,11 @@ def get_rna_kinetics_model_results(gene_data: GeneData,
     for lrt_index, lrt_input in enumerate(lrt_inputs):
         lrt_specification = lrt_input.lrt_specification
         results_reduced = fits.results_reduced[lrt_index]
+        tested_intron_index = _get_tested_intron_index(gene_data, lrt_specification)
         # Read off the tested ratio rather than the parameter table: three of the six ratios have
         # no row of their own there.
         lfc_of_tested_ratio = get_lfc_of_tested_ratio(
-            state_dict_model_full, lrt_specification.tested_ratio,
-            _get_tested_intron_index(gene_data, lrt_specification))
+            state_dict_model_full, lrt_specification.tested_ratio, tested_intron_index)
 
         test_result = lrt_input.lrt_metadata_row.to_dict()
         test_result['tested_parameter'] = lrt_specification.tested_ratio
@@ -779,6 +921,13 @@ def get_rna_kinetics_model_results(gene_data: GeneData,
                                   test_result['lfc_column_positive'])
                 - get_lfc_of_column(lfc_of_tested_ratio, feature_names,
                                     test_result['lfc_column_negative']))
+        test_result.update(get_contrast_wald_results(
+            parameter_covariance,
+            get_contrast_of_tested_ratio(model_full,
+                                         RATIO_AS_LFC_DIFFERENCE[lrt_specification.tested_ratio],
+                                         lrt_input.lrt_metadata_row,
+                                         tested_intron_index),
+            test_result['lfc']))
         test_result['loss_full_model'] = results_full.final_loss
         test_result['loss_reduced_model'] = results_reduced.final_loss
         test_result['chi2_test_statistics'] = 2 * (results_reduced.final_loss
@@ -923,6 +1072,7 @@ def get_intron_coverage_model_results(
     model_param_df['training_diverged_full_model'] = results_full.training_diverged
     model_param_df['training_converged_within_max_epochs_full_model'] = results_full.converged_within_max_epochs
 
+    parameter_covariance: Optional[ParameterCovariance] = None
     if not is_global_model:
         coverage_loss_fn = CoverageLoss(num_position_coverage=coverage.shape[2]).to(device)
 
@@ -932,7 +1082,8 @@ def get_intron_coverage_model_results(
 
         fisher_information_matrix = get_fisher_information_matrix(model_full,
                                                                   intron_coverage_loss_by_params)
-        model_param_df = add_wald_test_results(model_param_df, fisher_information_matrix)
+        parameter_covariance = get_parameter_covariance(fisher_information_matrix)
+        model_param_df = add_wald_test_results(model_param_df, parameter_covariance)
 
     feature_names = dataset_metadata.feature_names
     lfc_elong_over_splice = model_full.lfc_elong_over_splice.detach()[:, 0]
@@ -951,6 +1102,15 @@ def get_intron_coverage_model_results(
                                   lrt_row['lfc_column_positive'])
                 - get_lfc_of_column(lfc_elong_over_splice, feature_names,
                                     lrt_row['lfc_column_negative']))
+        if not is_global_model:
+            # The global model has no Fisher information, so it reports no Wald columns at all
+            # rather than a column of nulls.
+            test_result.update(get_contrast_wald_results(
+                parameter_covariance,
+                get_contrast_of_tested_ratio(model_full,
+                                             (LFCParameter.ELONG_OVER_SPLICE, None),
+                                             lrt_row),
+                test_result['lfc']))
         test_result['loss_full_model'] = results_full.final_loss
         test_result['loss_reduced_model'] = results_reduced.final_loss
         test_result['chi2_test_statistics'] = chi2_stat

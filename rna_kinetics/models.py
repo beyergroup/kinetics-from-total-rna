@@ -122,7 +122,7 @@ def build_param_df(model: nn.Module, parameter_axes: dict[str, tuple[Optional[st
     Row order is load-bearing: `add_wald_test_results` maps rows of the flattened Fisher
     information matrix onto rows of this dataframe by position. Rows are therefore emitted in
     `named_parameters()` order, each parameter flattened in C order, matching
-    `flatten_hessian_dict`.
+    `build_hessian_matrix_from_dict`.
     """
     axis_to_names = {
         'gene': getattr(model, 'gene_names', None),
