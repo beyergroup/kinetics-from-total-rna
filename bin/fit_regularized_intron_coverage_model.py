@@ -40,19 +40,25 @@ if __name__ == "__main__":
     dataset_metadata = cache_for_regularization.dataset_metadata
 
     regularized_model_params_list = []
+    regularized_ratio_lfcs_list = []
     for input_data, model_state_dict in tqdm(cache_for_regularization.training_input_per_gene):
-        model_param_df = get_regularized_intron_coverage_model_results(
+        results = get_regularized_intron_coverage_model_results(
             input_data=input_data,
             dataset_metadata=dataset_metadata,
             hot_start_state_dict=model_state_dict,
             regularization_coefficients_df=regularization_coefficients_df,
             device=device,
-            lfc_is_intron_specific=cache_for_regularization.lfc_is_intron_specific,
         )
-        regularized_model_params_list.append(model_param_df)
+        regularized_model_params_list.append(results.model_parameters)
+        regularized_ratio_lfcs_list.append(results.ratio_lfcs)
 
     pd.concat(regularized_model_params_list).reset_index(drop=True).to_csv(
         args.output_folder / f'regularized_model_parameters{args.output_name_suffix}.tsv',
+        sep='\t',
+        index=False,
+    )
+    pd.concat(regularized_ratio_lfcs_list).reset_index(drop=True).to_csv(
+        args.output_folder / f'regularized_ratio_lfcs{args.output_name_suffix}.tsv',
         sep='\t',
         index=False,
     )

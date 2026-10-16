@@ -96,13 +96,14 @@ if __name__ == "__main__":
                                                   intron_specific_lfc=args.intron_specific_lfc)
                    for gene_data in tqdm(gene_data_list)]
 
-    state_dicts_list: list[StateDict] = [result[2] for result in result_list]
+    state_dicts_list: list[StateDict] = [result.state_dict_full_model for result in result_list]
 
-    all_model_param_df = pd.concat([result[0] for result in result_list]).reset_index(drop=True)
-    all_test_results_df = pd.concat([result[1] for result in result_list]).reset_index(drop=True)
-
-    all_model_param_df.to_csv(output_folder / f"model_parameters{args.output_name_suffix}.tsv", sep='\t', index=False)
-    all_test_results_df.to_csv(output_folder / f"test_results{args.output_name_suffix}.tsv", sep='\t', index=False)
+    pd.concat([result.model_parameters for result in result_list]).reset_index(drop=True).to_csv(
+        output_folder / f"model_parameters{args.output_name_suffix}.tsv", sep='\t', index=False)
+    pd.concat([result.ratio_lfcs for result in result_list]).reset_index(drop=True).to_csv(
+        output_folder / f"ratio_lfcs{args.output_name_suffix}.tsv", sep='\t', index=False)
+    pd.concat([result.test_results for result in result_list]).reset_index(drop=True).to_csv(
+        output_folder / f"test_results{args.output_name_suffix}.tsv", sep='\t', index=False)
 
     cache_for_regularization = CacheForRegularization(
         training_input_per_gene=list(zip(gene_data_list, state_dicts_list)),

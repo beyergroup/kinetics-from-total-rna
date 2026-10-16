@@ -3,11 +3,11 @@ process WriteDesignMetadata {
 
     input:
     val design_formula
-    val lrt_contrasts
+    val contrasts
 
     output:
     path "design.json"
-    path "lrt_contrasts.json", emit: lrt_contrasts_json
+    path "contrasts.json", emit: contrasts_json
 
     script:
     def design_obj = [
@@ -15,11 +15,11 @@ process WriteDesignMetadata {
     ]
 
     def design_json_str       = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(design_obj))
-    def lrt_contrasts_json_str = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(lrt_contrasts ?: []))
+    def contrasts_json_str = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(contrasts ?: []))
 
     """
     printf '%s\n' '${design_json_str}'        > design.json
-    printf '%s\n' '${lrt_contrasts_json_str}' > lrt_contrasts.json
+    printf '%s\n' '${contrasts_json_str}' > contrasts.json
     """
 }
 
@@ -31,7 +31,7 @@ process CreateDesignMatrices {
     input:
     path samplesheet
     val design_formula
-    path lrt_contrasts_json
+    path contrasts_json
 
     output:
     path("design_matrix.tsv"), emit: design_matrix
@@ -43,7 +43,7 @@ process CreateDesignMatrices {
     create_design_matrices.R \
     --samplesheet $samplesheet \
     --formula "$design_formula" \
-    --lrt_contrasts_json $lrt_contrasts_json
+    --contrasts_json $contrasts_json
     """
 }
 
@@ -89,6 +89,7 @@ process FitModel {
 
     output:
     path("model_parameters*.tsv"), emit: model_parameters_chunk
+    path("ratio_lfcs*.tsv"), emit: ratio_lfcs_chunk
     path("test_results*.tsv"), emit: test_results_chunk
     tuple path("cache_for_regularization*.pt"), val(chunk_name), emit: cache_for_regularization
 
@@ -133,6 +134,7 @@ process FitGeneIntronCoverageModel {
 
     output:
     path("model_parameters*.tsv"), emit: model_parameters_chunk
+    path("ratio_lfcs*.tsv"), emit: ratio_lfcs_chunk
     path("test_results*.tsv"), emit: test_results_chunk
     tuple path("cache_for_regularization*.pt"), val(chunk_name), emit: cache_for_regularization
 
@@ -169,6 +171,7 @@ process FitIntronCoverageModel {
 
     output:
     path("model_parameters*.tsv"), emit: model_parameters_chunk
+    path("ratio_lfcs*.tsv"), emit: ratio_lfcs_chunk
     path("test_results*.tsv"), emit: test_results_chunk
     tuple path("cache_for_regularization*.pt"), val(chunk_name), emit: cache_for_regularization
 
@@ -267,12 +270,14 @@ process MergeModelResultChunks {
 
     input:
     path model_parameters_chunks
+    path ratio_lfcs_chunks
     path test_results_chunks
     val model_type_subfolder
 
     output:
     path("test_results_before_regularization.tsv"), emit: test_results_before_regularization
     path("model_parameters.tsv"), emit: model_parameters
+    path("ratio_lfcs.tsv"), emit: ratio_lfcs
 
     script:
     """
@@ -284,11 +289,11 @@ process MergeModelResultChunks {
 }
 
 
-process AdaptiveShrinkage {
+process EstimatePriorVariance {
     publishDir { "${params.outdir}/modeling/${params.model_run_id}/${model_type_subfolder}" }, mode: 'copy'
 
     input:
-    path model_parameters
+    path ratio_lfcs
     val model_type_subfolder
 
     output:
@@ -296,8 +301,8 @@ process AdaptiveShrinkage {
 
     script:
     """
-    adaptive_shrinkage.R \
-    --model_parameters $model_parameters
+    estimate_prior_variance.R \
+    --ratio_lfcs $ratio_lfcs
     """
 }
 
@@ -311,6 +316,7 @@ process FitRegularizedModel {
 
     output:
     path("regularized_model_parameters*.tsv"), emit: regularized_model_parameters_chunk
+    path("regularized_ratio_lfcs*.tsv"), emit: regularized_ratio_lfcs_chunk
 
 //     publishDir "${params.outdir}/modeling/${params.model_run_id}/processing_chunks/regularized_model_results_chunks/${chunk_name}", mode: 'copy'
 
@@ -334,6 +340,7 @@ process FitRegularizedIntronCoverageModel {
 
     output:
     path("regularized_model_parameters*.tsv"), emit: regularized_model_parameters_chunk
+    path("regularized_ratio_lfcs*.tsv"), emit: regularized_ratio_lfcs_chunk
 
     script:
     """
@@ -351,6 +358,7 @@ process MergeRegularization {
     input:
     path test_results_before_regularization
     path regularized_model_parameters_chunks
+    path regularized_ratio_lfcs_chunks
     val model_type_subfolder
 
     output:
@@ -443,20 +451,22 @@ workflow rna_kinetics_model_subworkflow {
 
         def model_result_merged = MergeModelResultChunks(
             fit_model_output.model_parameters_chunk.collect(),
+            fit_model_output.ratio_lfcs_chunk.collect(),
             fit_model_output.test_results_chunk.collect(),
             model_subfolder
         )
 
-        def adaptive_shrinkage_out = AdaptiveShrinkage(model_result_merged.model_parameters, model_subfolder)
+        def prior_variance_out = EstimatePriorVariance(model_result_merged.ratio_lfcs, model_subfolder)
 
         def fit_regularized_model_output = FitRegularizedModel(
             fit_model_output.cache_for_regularization
-                .combine(adaptive_shrinkage_out.regularization_coefficients)
+                .combine(prior_variance_out.regularization_coefficients)
         )
 
         def merge_regularization_output = MergeRegularization(
             model_result_merged.test_results_before_regularization,
             fit_regularized_model_output.regularized_model_parameters_chunk.collect(),
+            fit_regularized_model_output.regularized_ratio_lfcs_chunk.collect(),
             model_subfolder
         )
 
@@ -499,20 +509,22 @@ workflow intron_specific_rna_kinetics_model_subworkflow {
 
         def model_result_merged = MergeModelResultChunks(
             fit_model_output.model_parameters_chunk.collect(),
+            fit_model_output.ratio_lfcs_chunk.collect(),
             fit_model_output.test_results_chunk.collect(),
             model_subfolder
         )
 
-        def adaptive_shrinkage_out = AdaptiveShrinkage(model_result_merged.model_parameters, model_subfolder)
+        def prior_variance_out = EstimatePriorVariance(model_result_merged.ratio_lfcs, model_subfolder)
 
         def fit_regularized_model_output = FitRegularizedModel(
             fit_model_output.cache_for_regularization
-                .combine(adaptive_shrinkage_out.regularization_coefficients)
+                .combine(prior_variance_out.regularization_coefficients)
         )
 
         def merge_regularization_output = MergeRegularization(
             model_result_merged.test_results_before_regularization,
             fit_regularized_model_output.regularized_model_parameters_chunk.collect(),
+            fit_regularized_model_output.regularized_ratio_lfcs_chunk.collect(),
             model_subfolder
         )
 
@@ -554,20 +566,22 @@ workflow gene_specific_intron_coverage_model_subworkflow {
 
         def model_result_merged = MergeModelResultChunks(
             fit_model_output.model_parameters_chunk.collect(),
+            fit_model_output.ratio_lfcs_chunk.collect(),
             fit_model_output.test_results_chunk.collect(),
             model_subfolder
         )
 
-        def adaptive_shrinkage_out = AdaptiveShrinkage(model_result_merged.model_parameters, model_subfolder)
+        def prior_variance_out = EstimatePriorVariance(model_result_merged.ratio_lfcs, model_subfolder)
 
         def fit_regularized_model_output = FitRegularizedIntronCoverageModel(
             fit_model_output.cache_for_regularization
-                .combine(adaptive_shrinkage_out.regularization_coefficients)
+                .combine(prior_variance_out.regularization_coefficients)
         )
 
         def merge_regularization_output = MergeRegularization(
             model_result_merged.test_results_before_regularization,
             fit_regularized_model_output.regularized_model_parameters_chunk.collect(),
+            fit_regularized_model_output.regularized_ratio_lfcs_chunk.collect(),
             model_subfolder
         )
 
@@ -601,20 +615,22 @@ workflow intron_specific_intron_coverage_model_subworkflow {
 
         def model_result_merged = MergeModelResultChunks(
             fit_model_output.model_parameters_chunk.collect(),
+            fit_model_output.ratio_lfcs_chunk.collect(),
             fit_model_output.test_results_chunk.collect(),
             model_subfolder
         )
 
-        def adaptive_shrinkage_out = AdaptiveShrinkage(model_result_merged.model_parameters, model_subfolder)
+        def prior_variance_out = EstimatePriorVariance(model_result_merged.ratio_lfcs, model_subfolder)
 
         def fit_regularized_model_output = FitRegularizedIntronCoverageModel(
             fit_model_output.cache_for_regularization
-                .combine(adaptive_shrinkage_out.regularization_coefficients)
+                .combine(prior_variance_out.regularization_coefficients)
         )
 
         def merge_regularization_output = MergeRegularization(
             model_result_merged.test_results_before_regularization,
             fit_regularized_model_output.regularized_model_parameters_chunk.collect(),
+            fit_regularized_model_output.regularized_ratio_lfcs_chunk.collect(),
             model_subfolder
         )
 
@@ -715,7 +731,7 @@ workflow modeling_workflow {
         isoform_length_factors_input
         coverage_files_input
         design_formula
-        lrt_contrasts
+        contrasts
         modelable_genes_input
         modelable_introns_input
         fit_rna_kinetics_model
@@ -736,12 +752,12 @@ workflow modeling_workflow {
 
         StratifiedIntronMetacoveragePlots(stratified_plot_input, design_formula)
 
-        def design_metadata = WriteDesignMetadata(design_formula, lrt_contrasts)
+        def design_metadata = WriteDesignMetadata(design_formula, contrasts)
 
         def design_matrices_data = CreateDesignMatrices(
             samplesheet,
             design_formula,
-            design_metadata.lrt_contrasts_json
+            design_metadata.contrasts_json
         )
 
         def modeled_genes = GetModeledGenes(

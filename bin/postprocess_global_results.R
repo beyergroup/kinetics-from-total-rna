@@ -16,31 +16,19 @@ args <- parser$parse_args()
 output_folder <- args$output_folder
 if (!dir.exists(output_folder)) dir.create(output_folder, recursive = TRUE)
 
-# Names match the model parameter attributes in rna_kinetics/models.py. Each is a log fold
-# change of a ratio of two rates, which is why none of them is a rate change on its own.
-parameter_type_subtitles <- c(
+# Keyed by rate_ratio, which Python writes: these must stay in step with TestedRatio and the
+# LFC attribute names in rna_kinetics/models.py, or the plot falls back to the raw name. Each is a
+# log fold change of a ratio of two rates, which is why none of them is a rate change on its own.
+rate_ratio_subtitles <- c(
+  lfc_init_over_deg     = "LFC(initiation rate) − LFC(degradation rate)",
   lfc_elong_over_deg    = "LFC(elongation speed) − LFC(degradation rate)",
   lfc_splice_over_deg   = "LFC(splicing speed) − LFC(degradation rate)",
+  lfc_init_over_elong   = "LFC(initiation rate) − LFC(elongation speed)",
+  lfc_init_over_splice  = "LFC(initiation rate) − LFC(splicing speed)",
   lfc_elong_over_splice = "LFC(elongation speed) − LFC(splicing speed)"
 )
 
 test_results <- read_tsv(args$test_results)
-
-if (args$model_type == "global_rna_kinetics") {
-  test_results <- test_results |>
-    mutate(
-      parameter_type = case_when(
-        tested_parameter == "beta"  ~ "lfc_elong_over_deg",
-        tested_parameter == "gamma" ~ "lfc_splice_over_deg",
-        TRUE                        ~ tested_parameter
-      ),
-    ) |>
-    select(-tested_parameter)
-} else {
-  test_results <- test_results |>
-    mutate(parameter_type = "lfc_elong_over_splice") |>
-    select(-tested_parameter)
-}
 
 test_results <- test_results |>
   mutate(
@@ -70,7 +58,7 @@ test_results <- test_results |>
 test_results |>
   select(-comparison, -sig_label, -significant) |>
   rename(lfc_mle = lfc, l2fc_mle = l2fc) |>
-  select(parameter_type, variable, group_1, group_2, l2fc_mle, lfc_mle,
+  select(rate_ratio, variable, group_1, group_2, l2fc_mle, lfc_mle,
          p_value, chi2_test_statistics, test_id, test_type, everything()) |>
   write_tsv(file.path(output_folder, "test_results.tsv"))
 
@@ -104,13 +92,13 @@ make_global_plot <- function(df, subtitle) {
   p
 }
 
-for (param_type in unique(test_results$parameter_type)) {
-  df       <- test_results |> filter(parameter_type == param_type)
-  subtitle <- parameter_type_subtitles[[param_type]] %||% param_type
+for (rate_ratio_name in unique(test_results$rate_ratio)) {
+  df       <- test_results |> filter(rate_ratio == rate_ratio_name)
+  subtitle <- rate_ratio_subtitles[[rate_ratio_name]] %||% rate_ratio_name
 
   plot_height <- max(4, 1.5 + 0.45 * nrow(df))
 
   p <- make_global_plot(df, subtitle)
-  ggsave(file.path(plots_folder, paste0(param_type, ".png")),
+  ggsave(file.path(plots_folder, paste0(rate_ratio_name, ".png")),
          plot = p, bg = "white", width = 9, height = plot_height, dpi = 300)
 }

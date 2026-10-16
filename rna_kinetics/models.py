@@ -21,37 +21,62 @@ def safe_exp(x: torch.Tensor, output_threshold: float = 1e20) -> torch.Tensor:
     )
 
 
-class TestableParameters(StrEnum):
-    ALPHA = 'alpha'
-    BETA = 'beta'
-    GAMMA = 'gamma'
+class LFCParameter(StrEnum):
+    """
+    The models' log fold change parameters, by attribute name.
+
+    Separate from TestedRatio, which enumerates hypotheses rather than parameters, though every
+    parameter here is also a tested ratio under the same name. The two tested ratios that are not
+    parameters, init/elong and init/splice, are differences of two.
+    """
+    INIT_OVER_DEG = 'lfc_init_over_deg'
+    ELONG_OVER_DEG = 'lfc_elong_over_deg'
+    SPLICE_OVER_DEG = 'lfc_splice_over_deg'
+    ELONG_OVER_SPLICE = 'lfc_elong_over_splice'
 
 
-# Stable output vocabulary: the values written to the `parameter_type` column, which
-# `merge_regularization.R` joins against `tested_parameter`. Deliberately decoupled from the
-# attribute names, so those can be renamed without touching any R script or output schema.
-# TODO: 'theta' is a leftover name for intercept_pi_logit; renaming it is a schema change and
-# belongs with the LRT refactor, when the R side is being touched anyway.
-PARAMETER_WIRE_NAMES = {
-    'intercept_exon': 'intercept_exon',
-    'lfc_init_over_deg': 'alpha',
-    'lfc_elong_over_deg': 'beta',
-    'lfc_splice_over_deg': 'gamma',
-    'lfc_elong_over_splice': 'lfc',
-    'intercept_unspliced': 'intercept_unspliced',
-    'intercept_pi_logit': 'theta',
+class TestedRatio(StrEnum):
+    """
+    Which rate ratio an LRT restricts.
+
+    All six ratios of the four rates are testable. Three of them are model parameters; the other
+    three are differences of two parameters, which is well-defined because every parameter is a
+    ratio against degradation, so the degradation term cancels in the difference.
+
+    The values are the LFC attribute names, and are written verbatim to the `rate_ratio`
+    column of the test results and on into the volcano plot paths. The three ratios that are not
+    parameters have no attribute of their own, but are named the same way.
+    """
+    INIT_OVER_DEG = 'lfc_init_over_deg'
+    ELONG_OVER_DEG = 'lfc_elong_over_deg'
+    SPLICE_OVER_DEG = 'lfc_splice_over_deg'
+    INIT_OVER_ELONG = 'lfc_init_over_elong'
+    INIT_OVER_SPLICE = 'lfc_init_over_splice'
+    ELONG_OVER_SPLICE = 'lfc_elong_over_splice'
+
+
+# Each tested ratio as a difference of LFC parameters, with None for a ratio that is a single
+# parameter. Used to build the reduced model's hot start and to report the effect size, both of
+# which need the full model's value of the ratio rather than of one parameter.
+RATIO_AS_LFC_DIFFERENCE: dict[TestedRatio, tuple[LFCParameter, Optional[LFCParameter]]] = {
+    TestedRatio.INIT_OVER_DEG: (LFCParameter.INIT_OVER_DEG, None),
+    TestedRatio.ELONG_OVER_DEG: (LFCParameter.ELONG_OVER_DEG, None),
+    TestedRatio.SPLICE_OVER_DEG: (LFCParameter.SPLICE_OVER_DEG, None),
+    TestedRatio.INIT_OVER_ELONG: (LFCParameter.INIT_OVER_DEG, LFCParameter.ELONG_OVER_DEG),
+    TestedRatio.INIT_OVER_SPLICE: (LFCParameter.INIT_OVER_DEG, LFCParameter.SPLICE_OVER_DEG),
+    TestedRatio.ELONG_OVER_SPLICE: (LFCParameter.ELONG_OVER_DEG, LFCParameter.SPLICE_OVER_DEG),
 }
 
-TESTED_PARAMETER_TO_ATTRIBUTE = {
-    TestableParameters.ALPHA: 'lfc_init_over_deg',
-    TestableParameters.BETA: 'lfc_elong_over_deg',
-    TestableParameters.GAMMA: 'lfc_splice_over_deg',
-}
+# The global model's lfc_init_over_deg is per gene rather than shared, so no ratio involving
+# initiation describes a single genome-wide effect and only these three can be tested there.
+GLOBAL_MODEL_TESTED_RATIOS = (TestedRatio.ELONG_OVER_DEG,
+                              TestedRatio.SPLICE_OVER_DEG,
+                              TestedRatio.ELONG_OVER_SPLICE)
 
 
 class LRTSpecification(NamedTuple):
     num_features_reduced_matrix: int
-    tested_parameter: TestableParameters
+    tested_ratio: TestedRatio
     tested_intron: Optional[str] = None
 
 
@@ -97,7 +122,7 @@ def build_param_df(model: nn.Module, parameter_axes: dict[str, tuple[Optional[st
     Row order is load-bearing: `add_wald_test_results` maps rows of the flattened Fisher
     information matrix onto rows of this dataframe by position. Rows are therefore emitted in
     `named_parameters()` order, each parameter flattened in C order, matching
-    `flatten_hessian_dict`.
+    `build_hessian_matrix_from_dict`.
     """
     axis_to_names = {
         'gene': getattr(model, 'gene_names', None),
@@ -118,7 +143,9 @@ def build_param_df(model: nn.Module, parameter_axes: dict[str, tuple[Optional[st
         index_ranges = [range(1) if axis is None else range(len(axis_to_names[axis])) for axis in axes]
         num_rows_before = len(parameter_data)
         for index_combination in itertools.product(*index_ranges):
-            row = {'parameter_type': PARAMETER_WIRE_NAMES[param_name]}
+            # parameter_type is the attribute name itself, which is also what reaches the
+            # output TSVs and the volcano plot paths, so renaming a parameter is a schema change.
+            row = {'parameter_type': param_name}
             row.update({f'{axis}_name': None for axis in emitted_axes})
             for axis, axis_index in zip(axes, index_combination):
                 if axis is not None:
@@ -221,10 +248,11 @@ class RNAKineticsModel(nn.Module):
         self.tested_intron_index: Optional[int] = None
         if lrt_specification is not None:
             self.reduced_lfc = nn.Parameter(torch.zeros(lrt_specification.num_features_reduced_matrix))
-            # Only intron-specific LFC parameters (elongation, splicing) are tested per intron;
-            # lfc_init_over_deg is shared across the gene, so it has no tested intron.
+            # Every ratio except init/deg involves elongation or splicing, whose LFCs can be
+            # intron-specific, so those are tested one intron at a time. init/deg involves only
+            # lfc_init_over_deg, which is shared across the gene, so it has no tested intron.
             tests_single_intron = (intron_specific_lfc
-                                   and lrt_specification.tested_parameter != TestableParameters.ALPHA)
+                                   and lrt_specification.tested_ratio != TestedRatio.INIT_OVER_DEG)
             if tests_single_intron:
                 self.tested_intron_index = self.intron_names.index(lrt_specification.tested_intron)
 
@@ -249,52 +277,138 @@ class RNAKineticsModel(nn.Module):
                 gene_data.intron_reads.mean(dim=0) / library_sizes.mean() * (1 - best_pi))
             self.intercept_unspliced.data.copy_(intercept_unspliced_vector)
 
+    def get_lfc_terms_per_read_class(self,
+                                     design_matrix: torch.Tensor,
+                                     reduced_design_matrix: Optional[torch.Tensor]
+                                     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        LFC term of each read class the model predicts. Unrestricted, the three are
+
+            exon      = X @ alpha
+            nascent   = X @ (alpha - beta)
+            unspliced = X @ (alpha - gamma)
+
+        and every LRT is a single substitution here: the term of the rate ratio under test is
+        built from the reduced design matrix, while the other read classes keep the full one.
+        Which ratio is tested therefore decides which read class gets substituted.
+
+        The exon term is (num_samples,); the intron terms are (num_samples, num_introns), or
+        (num_samples, 1) broadcasting over introns when the LFCs are shared across them.
+        """
+        init_over_deg_term = design_matrix @ self.lfc_init_over_deg
+        elong_over_deg_term = design_matrix @ self.lfc_elong_over_deg
+        splice_over_deg_term = design_matrix @ self.lfc_splice_over_deg
+
+        if self.lrt_specification is None:
+            return (init_over_deg_term,
+                    init_over_deg_term.unsqueeze(1) - elong_over_deg_term,
+                    init_over_deg_term.unsqueeze(1) - splice_over_deg_term)
+
+        if reduced_design_matrix is None:
+            raise ValueError(
+                "reduced_design_matrix must be provided in the LRT mode "
+                "(i.e. when lrt_specification is not None).")
+        # Stands in for whichever LFC is under test, so below it is used in exactly the position
+        # that LFC occupies in the unrestricted terms.
+        reduced_lfc_term = reduced_design_matrix @ self.reduced_lfc  # (num_samples,)
+        tested_ratio = self.lrt_specification.tested_ratio
+
+        if tested_ratio == TestedRatio.INIT_OVER_DEG:
+            # alpha feeds all three read classes and is never intron-specific, so all three are
+            # rebuilt. It enters each of them positively.
+            reduced_init_per_intron = reduced_lfc_term.unsqueeze(1)
+            return (reduced_lfc_term,
+                    reduced_init_per_intron - elong_over_deg_term,
+                    reduced_init_per_intron - splice_over_deg_term)
+
+        init_over_deg_per_intron = init_over_deg_term.unsqueeze(1)
+        nascent_term = init_over_deg_per_intron - elong_over_deg_term
+        unspliced_term = init_over_deg_per_intron - splice_over_deg_term
+        reduced_per_intron = reduced_lfc_term.unsqueeze(1)
+
+        # Each remaining ratio is restricted by rebuilding one intron read class from the reduced
+        # term, in the place that ratio occupies:
+        #   elong/deg  = init - nascent      so the nascent class becomes init - reduced
+        #   splice/deg = init - unspliced    so the unspliced class becomes init - reduced
+        #   init/elong = nascent             so the nascent class becomes the reduced term itself
+        #   init/splice = unspliced          so the unspliced class becomes the reduced term
+        #   elong/splice = unspliced - nascent    so the unspliced class becomes nascent + reduced
+        if tested_ratio == TestedRatio.ELONG_OVER_DEG:
+            nascent_term = self._get_restricted_intron_term(
+                nascent_term, init_over_deg_per_intron - reduced_per_intron)
+        elif tested_ratio == TestedRatio.SPLICE_OVER_DEG:
+            unspliced_term = self._get_restricted_intron_term(
+                unspliced_term, init_over_deg_per_intron - reduced_per_intron)
+        elif tested_ratio == TestedRatio.INIT_OVER_ELONG:
+            nascent_term = self._get_restricted_intron_term(nascent_term, reduced_per_intron)
+        elif tested_ratio == TestedRatio.INIT_OVER_SPLICE:
+            unspliced_term = self._get_restricted_intron_term(unspliced_term, reduced_per_intron)
+        elif tested_ratio == TestedRatio.ELONG_OVER_SPLICE:
+            unspliced_term = self._get_restricted_intron_term(
+                unspliced_term,
+                self._get_tested_intron_column(nascent_term) + reduced_per_intron)
+        else:
+            raise ValueError(f'Unhandled tested ratio: {tested_ratio!r}')
+
+        return init_over_deg_term, nascent_term, unspliced_term
+
+    def _get_tested_intron_column(self, full_term: torch.Tensor) -> torch.Tensor:
+        """
+        The tested intron's column of an intron-axis term, kept two-dimensional. With LFCs shared
+        across introns there is only one column, which is the term itself.
+        """
+        if not self.intron_specific_lfc:
+            return full_term
+        intron_index = self.tested_intron_index
+        return full_term[:, intron_index:intron_index + 1]
+
+    def _get_restricted_intron_term(self, full_term: torch.Tensor,
+                                    restricted_term: torch.Tensor) -> torch.Tensor:
+        """
+        One intron read class's term, under the restriction.
+
+        With intron-specific LFCs only the tested intron is restricted, so its column comes from
+        restricted_term while every other intron keeps its full value. With LFCs shared across
+        introns there is a single column, which restricted_term replaces outright. Built with
+        torch.cat rather than an in-place write into a matmul output, so autograd's
+        version-counter semantics stay off the critical path.
+        """
+        if not self.intron_specific_lfc:
+            return restricted_term
+        intron_index = self.tested_intron_index
+        return torch.cat([full_term[:, :intron_index],
+                          restricted_term,
+                          full_term[:, intron_index + 1:]], dim=1)
+
     def forward(self,
                 design_matrix: torch.Tensor,
                 log_library_sizes: torch.Tensor,
                 isoform_length_offset: torch.Tensor,
                 reduced_design_matrix: Optional[torch.Tensor] = None):
+        lfc_term_exon, lfc_term_nascent, lfc_term_unspliced = self.get_lfc_terms_per_read_class(
+            design_matrix, reduced_design_matrix)
 
-        if self.lrt_specification is None:
-            init_over_deg_term = design_matrix @ self.lfc_init_over_deg
-            elong_over_deg_term = design_matrix @ self.lfc_elong_over_deg
-            splice_over_deg_term = design_matrix @ self.lfc_splice_over_deg
-        else:
-            if reduced_design_matrix is None:
-                raise ValueError(
-                    "reduced_design_matrix must be provided in the LRT mode "
-                    "(i.e. when lrt_specification is not None).")
-            init_over_deg_term = reduced_design_matrix @ self.reduced_lfc if self.lrt_specification.tested_parameter == TestableParameters.ALPHA else design_matrix @ self.lfc_init_over_deg
+        predicted_log_reads_exon = (self.intercept_exon + log_library_sizes
+                                    + isoform_length_offset + lfc_term_exon)
 
-            if self.intron_specific_lfc:
-                elong_over_deg_term = design_matrix @ self.lfc_elong_over_deg
-                splice_over_deg_term = design_matrix @ self.lfc_splice_over_deg
-                if self.lrt_specification.tested_parameter == TestableParameters.BETA:
-                    elong_over_deg_term[:, self.tested_intron_index] = reduced_design_matrix @ self.reduced_lfc
-                elif self.lrt_specification.tested_parameter == TestableParameters.GAMMA:
-                    splice_over_deg_term[:, self.tested_intron_index] = reduced_design_matrix @ self.reduced_lfc
+        # pi is not an independent quantity: it is the nascent fraction implied by the two intron
+        # read classes. Deriving it from the same two terms that build the counts is what keeps
+        # the coverage loss and the Poisson count loss fitting one pi under every null.
+        predicted_pi = torch.sigmoid(
+            self.intercept_pi_logit + lfc_term_nascent - lfc_term_unspliced)
 
-            else:
-                elong_over_deg_term = (reduced_design_matrix @ self.reduced_lfc).unsqueeze(
-                    1) if self.lrt_specification.tested_parameter == TestableParameters.BETA else design_matrix @ self.lfc_elong_over_deg
-                splice_over_deg_term = (reduced_design_matrix @ self.reduced_lfc).unsqueeze(
-                    1) if self.lrt_specification.tested_parameter == TestableParameters.GAMMA else design_matrix @ self.lfc_splice_over_deg
-
-        predicted_log_reads_exon = self.intercept_exon + log_library_sizes + isoform_length_offset + init_over_deg_term
-
-        predicted_pi = torch.sigmoid(self.intercept_pi_logit - elong_over_deg_term + splice_over_deg_term)
-
-        # Both intron arms carry the same library-size and initiation offsets; they differ only in
-        # their intercept and in which rate ratio divides them. Naming the nascent intercept makes
-        # intercept_pi_logit's role explicit: it is how far the nascent baseline sits above the
-        # unspliced one, which is exactly the baseline logit of the nascent fraction.
-        shared_intron_offset = log_library_sizes.unsqueeze(1) + init_over_deg_term.unsqueeze(1)
+        # The two intron read classes share the library-size offset and differ in their
+        # intercept. Naming the nascent intercept makes intercept_pi_logit's role explicit: it is
+        # how far the nascent baseline sits above the unspliced one, i.e. the baseline logit of
+        # the nascent fraction.
+        log_library_sizes_per_intron = log_library_sizes.unsqueeze(1)
         intercept_nascent = self.intercept_unspliced + self.intercept_pi_logit
 
-        reads_nascent_intron = safe_exp(intercept_nascent + shared_intron_offset - elong_over_deg_term)
-        reads_unspliced_intron = safe_exp(
-            self.intercept_unspliced + shared_intron_offset - splice_over_deg_term)
-        predicted_reads_intron = reads_nascent_intron + reads_unspliced_intron
+        predicted_reads_intron_nascent = safe_exp(
+            intercept_nascent + log_library_sizes_per_intron + lfc_term_nascent)
+        predicted_reads_intron_unspliced = safe_exp(
+            self.intercept_unspliced + log_library_sizes_per_intron + lfc_term_unspliced)
+        predicted_reads_intron = predicted_reads_intron_nascent + predicted_reads_intron_unspliced
 
         return safe_exp(predicted_log_reads_exon), predicted_reads_intron, predicted_pi
 
@@ -314,8 +428,7 @@ class IntronCoverageModel(nn.Module):
 
     def __init__(self,
                  feature_names: list[str],
-                 intron_names: list[str],
-                 lfc_is_intron_specific: bool = False):
+                 intron_names: list[str]):
         super().__init__()
         self.feature_names = feature_names
         self.intron_names = intron_names
@@ -323,14 +436,10 @@ class IntronCoverageModel(nn.Module):
         num_features = len(feature_names)
         num_introns = len(intron_names)
 
-        # The model always has a single LFC, shared across whatever introns it was given.
-        # When it is fitted to one intron at a time, that LFC belongs to that intron and is
-        # reported under its name; when fitted per gene, it is shared and reported unnamed.
-        if lfc_is_intron_specific and num_introns != 1:
-            raise ValueError(
-                f"lfc_is_intron_specific requires exactly one intron, got {num_introns}: {intron_names}.")
-        self.lfc_is_intron_specific = lfc_is_intron_specific
-
+        # One LFC, shared across whatever introns the model was given. The second axis is a
+        # singleton so that the term broadcasts against the per-intron intercept; it is never an
+        # intron axis. Fitting this model per intron means constructing it with that one intron,
+        # and then its LFC is reported under that intron's name -- see get_param_df.
         self.lfc_elong_over_splice = nn.Parameter(torch.zeros(num_features, 1))
         self.intercept_pi_logit = nn.Parameter(torch.zeros(num_introns))
 
@@ -347,8 +456,11 @@ class IntronCoverageModel(nn.Module):
         return pi
 
     def get_param_df(self) -> pd.DataFrame:
+        # Given a single intron, the shared LFC is that intron's LFC, so it is reported under its
+        # name. Given several, it is shared across them and reported unnamed.
+        lfc_intron_axis = 'intron' if len(self.intron_names) == 1 else None
         return build_param_df(self, {
-            'lfc_elong_over_splice': ('feature', 'intron' if self.lfc_is_intron_specific else None),
+            'lfc_elong_over_splice': ('feature', lfc_intron_axis),
             'intercept_pi_logit': ('intron',),
         })
 
@@ -382,10 +494,10 @@ class GlobalRNAKineticsModel(nn.Module):
 
         self.lrt_specification = lrt_specification
         if lrt_specification is not None:
-            if lrt_specification.tested_parameter not in (TestableParameters.BETA, TestableParameters.GAMMA):
+            if lrt_specification.tested_ratio not in GLOBAL_MODEL_TESTED_RATIOS:
                 raise ValueError(
-                    f"GlobalRNAKineticsModel LRT only supports BETA and GAMMA, "
-                    f"got {lrt_specification.tested_parameter!r}.")
+                    f"GlobalRNAKineticsModel LRT supports only {GLOBAL_MODEL_TESTED_RATIOS}, "
+                    f"got {lrt_specification.tested_ratio!r}.")
             self.reduced_lfc = nn.Parameter(torch.zeros(lrt_specification.num_features_reduced_matrix))
 
     def initialize_parameters(self,
@@ -414,51 +526,80 @@ class GlobalRNAKineticsModel(nn.Module):
                 torch.log(global_gene_data.intron_reads.mean(dim=0) / library_sizes.mean() * (1 - best_pi))
             )
 
+    def get_lfc_terms_per_read_class(self,
+                                     design_matrix: torch.Tensor,
+                                     reduced_design_matrix: Optional[torch.Tensor]
+                                     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        LFC term of each read class the model predicts, shaped (num_samples, num_genes),
+        (num_samples, num_introns) and (num_samples, num_introns).
+
+        Same three terms as RNAKineticsModel (exon = X @ alpha, nascent = X @ (alpha - beta),
+        unspliced = X @ (alpha - gamma)), except that alpha is per gene here while beta and gamma
+        are shared, so the exon class is indexed by gene and the intron classes are expanded
+        through gene_idx.
+        """
+        init_over_deg_term = design_matrix @ self.lfc_init_over_deg.T  # (num_samples, num_genes)
+        init_over_deg_per_intron = init_over_deg_term[:, self.gene_idx]  # (num_samples, num_introns)
+
+        nascent_term = (init_over_deg_per_intron
+                        - (design_matrix @ self.lfc_elong_over_deg).unsqueeze(1))
+        unspliced_term = (init_over_deg_per_intron
+                          - (design_matrix @ self.lfc_splice_over_deg).unsqueeze(1))
+
+        if self.lrt_specification is not None:
+            if reduced_design_matrix is None:
+                raise ValueError("reduced_design_matrix must be provided in LRT mode.")
+            # Stands in for whichever LFC is under test, used in the place that ratio occupies:
+            #   elong/deg    = init - nascent          so nascent becomes init - reduced
+            #   splice/deg   = init - unspliced        so unspliced becomes init - reduced
+            #   elong/splice = unspliced - nascent     so unspliced becomes nascent + reduced
+            reduced_lfc_term = (reduced_design_matrix @ self.reduced_lfc).unsqueeze(1)
+            tested_ratio = self.lrt_specification.tested_ratio
+            if tested_ratio == TestedRatio.ELONG_OVER_DEG:
+                nascent_term = init_over_deg_per_intron - reduced_lfc_term
+            elif tested_ratio == TestedRatio.SPLICE_OVER_DEG:
+                unspliced_term = init_over_deg_per_intron - reduced_lfc_term
+            elif tested_ratio == TestedRatio.ELONG_OVER_SPLICE:
+                unspliced_term = nascent_term + reduced_lfc_term
+            else:
+                raise ValueError(f'Unhandled tested ratio: {tested_ratio!r}')
+
+        return init_over_deg_term, nascent_term, unspliced_term
+
     def forward(self,
                 design_matrix: torch.Tensor,
                 log_library_sizes: torch.Tensor,
                 isoform_length_offset: torch.Tensor,
                 reduced_design_matrix: Optional[torch.Tensor] = None):
-
-        init_over_deg_term = design_matrix @ self.lfc_init_over_deg.T  # (num_samples, num_genes)
+        lfc_term_exon, lfc_term_nascent, lfc_term_unspliced = self.get_lfc_terms_per_read_class(
+            design_matrix, reduced_design_matrix)
 
         predicted_log_reads_exon = (
                 self.intercept_exon
                 + log_library_sizes.unsqueeze(1)
                 + isoform_length_offset
-                + init_over_deg_term
+                + lfc_term_exon
         )
 
-        if self.lrt_specification is None:
-            elong_over_deg_term = (design_matrix @ self.lfc_elong_over_deg).unsqueeze(1)
-            splice_over_deg_term = (design_matrix @ self.lfc_splice_over_deg).unsqueeze(1)
-        else:
-            if reduced_design_matrix is None:
-                raise ValueError("reduced_design_matrix must be provided in LRT mode.")
-            reduced_term = (reduced_design_matrix @ self.reduced_lfc).unsqueeze(1)
-            elong_over_deg_term = (
-                reduced_term if self.lrt_specification.tested_parameter == TestableParameters.BETA
-                else (design_matrix @ self.lfc_elong_over_deg).unsqueeze(1)
-            )
-            splice_over_deg_term = (
-                reduced_term if self.lrt_specification.tested_parameter == TestableParameters.GAMMA
-                else (design_matrix @ self.lfc_splice_over_deg).unsqueeze(1)
-            )
+        # pi is not an independent quantity: it is the nascent fraction implied by the two intron
+        # read classes. Deriving it from the same two terms that build the counts is what keeps
+        # the coverage loss and the Poisson count loss fitting one pi under every null.
+        predicted_pi = torch.sigmoid(
+            self.intercept_pi_logit + lfc_term_nascent - lfc_term_unspliced)
 
-        init_over_deg_per_intron = init_over_deg_term[:, self.gene_idx]  # (num_samples, num_introns)
-
-        # Both intron arms carry the same library-size and initiation offsets; they differ only in
-        # their intercept and in which rate ratio divides them. Naming the nascent intercept makes
-        # intercept_pi_logit's role explicit: it is how far the nascent baseline sits above the
-        # unspliced one, which is exactly the baseline logit of the nascent fraction.
-        shared_intron_offset = log_library_sizes.unsqueeze(1) + init_over_deg_per_intron
+        # The two intron read classes share the library-size offset and differ in their
+        # intercept. Naming the nascent intercept makes intercept_pi_logit's role explicit: it is
+        # how far the nascent baseline sits above the unspliced one, i.e. the baseline logit of
+        # the nascent fraction.
+        log_library_sizes_per_intron = log_library_sizes.unsqueeze(1)
         intercept_nascent = self.intercept_unspliced + self.intercept_pi_logit
 
-        predicted_pi = torch.sigmoid(self.intercept_pi_logit - elong_over_deg_term + splice_over_deg_term)
-        reads_nascent_intron = safe_exp(intercept_nascent + shared_intron_offset - elong_over_deg_term)
-        reads_unspliced_intron = safe_exp(
-            self.intercept_unspliced + shared_intron_offset - splice_over_deg_term)
-        predicted_reads_intron = reads_nascent_intron + reads_unspliced_intron
+        predicted_reads_intron_nascent = safe_exp(
+            intercept_nascent + log_library_sizes_per_intron + lfc_term_nascent)
+        predicted_reads_intron_unspliced = safe_exp(
+            self.intercept_unspliced + log_library_sizes_per_intron + lfc_term_unspliced)
+        predicted_reads_intron = predicted_reads_intron_nascent + predicted_reads_intron_unspliced
 
         return safe_exp(predicted_log_reads_exon), predicted_reads_intron, predicted_pi
 

@@ -39,26 +39,31 @@ if __name__ == "__main__":
     )
 
     model_params_list: list[pd.DataFrame] = []
+    ratio_lfcs_list: list[pd.DataFrame] = []
     test_results_list: list[pd.DataFrame] = []
     training_inputs: list[tuple] = []
 
     for intron_data in tqdm(intron_data_list):
-        model_param_df, test_results_df, state_dict = get_intron_coverage_model_results(
+        results = get_intron_coverage_model_results(
             coverage=intron_data.coverage,
             dataset_metadata=dataset_metadata,
             intron_names=intron_data.intron_names,
-            lfc_is_intron_specific=True,
         )
-        model_param_df = model_param_df.reset_index(drop=True)
+        model_param_df = results.model_parameters.reset_index(drop=True)
         model_param_df['gene_name'] = intron_data.gene_name
-        test_results_df['gene_name'] = intron_data.gene_name
+        results.ratio_lfcs['gene_name'] = intron_data.gene_name
+        results.test_results['gene_name'] = intron_data.gene_name
 
         model_params_list.append(model_param_df)
-        test_results_list.append(test_results_df)
-        training_inputs.append((intron_data, state_dict))
+        ratio_lfcs_list.append(results.ratio_lfcs)
+        test_results_list.append(results.test_results)
+        training_inputs.append((intron_data, results.state_dict_full_model))
 
     pd.concat(model_params_list).reset_index(drop=True).to_csv(
         args.output_folder / f'model_parameters{args.output_name_suffix}.tsv', sep='\t', index=False
+    )
+    pd.concat(ratio_lfcs_list).reset_index(drop=True).to_csv(
+        args.output_folder / f'ratio_lfcs{args.output_name_suffix}.tsv', sep='\t', index=False
     )
     pd.concat(test_results_list).reset_index(drop=True).to_csv(
         args.output_folder / f'test_results{args.output_name_suffix}.tsv', sep='\t', index=False
@@ -67,7 +72,6 @@ if __name__ == "__main__":
     cache_for_regularization = CacheForRegularization(
         training_input_per_gene=training_inputs,
         dataset_metadata=dataset_metadata,
-        lfc_is_intron_specific=True,
     )
     torch.save(cache_for_regularization,
                args.output_folder / f'cache_for_regularization{args.output_name_suffix}.pt')

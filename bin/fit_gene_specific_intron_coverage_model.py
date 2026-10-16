@@ -82,24 +82,30 @@ if __name__ == "__main__":
     )
 
     model_params_list: list[pd.DataFrame] = []
+    ratio_lfcs_list: list[pd.DataFrame] = []
     test_results_list: list[pd.DataFrame] = []
     state_dicts_list: list[StateDict] = []
 
     for gene_data in tqdm(gene_data_list):
-        model_param_df, test_results_df, state_dict = get_intron_coverage_model_results(
+        results = get_intron_coverage_model_results(
             coverage=gene_data.coverage,
             dataset_metadata=dataset_metadata,
             intron_names=gene_data.intron_names,
         )
-        model_param_df = model_param_df.reset_index(drop=True)
+        model_param_df = results.model_parameters.reset_index(drop=True)
         model_param_df['gene_name'] = gene_data.gene_name
-        test_results_df['gene_name'] = gene_data.gene_name
+        results.ratio_lfcs['gene_name'] = gene_data.gene_name
+        results.test_results['gene_name'] = gene_data.gene_name
         model_params_list.append(model_param_df)
-        test_results_list.append(test_results_df)
-        state_dicts_list.append(state_dict)
+        ratio_lfcs_list.append(results.ratio_lfcs)
+        test_results_list.append(results.test_results)
+        state_dicts_list.append(results.state_dict_full_model)
 
     pd.concat(model_params_list).reset_index(drop=True).to_csv(
         args.output_folder / f'model_parameters{args.output_name_suffix}.tsv', sep='\t', index=False
+    )
+    pd.concat(ratio_lfcs_list).reset_index(drop=True).to_csv(
+        args.output_folder / f'ratio_lfcs{args.output_name_suffix}.tsv', sep='\t', index=False
     )
     pd.concat(test_results_list).reset_index(drop=True).to_csv(
         args.output_folder / f'test_results{args.output_name_suffix}.tsv', sep='\t', index=False
