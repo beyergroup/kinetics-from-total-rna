@@ -452,14 +452,83 @@ def _make_closures(
     return closure, evaluate_loss
 
 
+# The ratios the prior is defined over, in the order `estimate_prior_variance.R` writes its
+# covariance columns. The other three ratios are differences of these, so penalising these three
+# jointly penalises all six; doing it with one covariance rather than six separate weights is what
+# keeps the implied prior a distribution at all.
+LFC_PRIOR_BASIS = (LFCParameter.INIT_OVER_DEG,
+                   LFCParameter.ELONG_OVER_DEG,
+                   LFCParameter.SPLICE_OVER_DEG)
+
+
+def get_prior_precision(regularization_coefficients_df: pd.DataFrame,
+                        feature_names: list[str],
+                        device: str = 'cpu') -> torch.Tensor:
+    """
+    The inverse prior covariance of the three parametrized ratios, per design column.
+
+    Reads the covariance `estimate_prior_variance.R` fitted jointly over those three and inverts
+    it, giving the matrix the penalty is a quadratic form in. A design column whose covariance is
+    incomplete -- some ratio was not estimable there -- falls back to the diagonal built from that
+    column's per-ratio `lambda`, which penalises whatever directions were estimable and leaves the
+    rest effectively free.
+    """
+    coefficients = regularization_coefficients_df.set_index(['parameter_type', 'feature_name'])
+    precision = torch.zeros((len(feature_names), len(LFC_PRIOR_BASIS), len(LFC_PRIOR_BASIS)))
+    covariance_columns = [f'prior_cov_{ratio.removeprefix("lfc_")}' for ratio in LFC_PRIOR_BASIS]
+
+    for feature_index, feature_name in enumerate(feature_names):
+        rows = [coefficients.loc[(ratio, feature_name)] for ratio in LFC_PRIOR_BASIS]
+        covariance = np.array([[row[column] for column in covariance_columns] for row in rows],
+                              dtype=np.float64)
+        if np.isfinite(covariance).all():
+            precision[feature_index] = torch.from_numpy(np.linalg.inv(covariance)).float()
+        else:
+            lambdas = [row['lambda'] for row in rows]
+            precision[feature_index] = torch.diag(2 * torch.tensor(lambdas, dtype=torch.float32))
+    return precision.to(device)
+
+
+def get_prior_penalty(model: RNAKineticsModel, prior_precision: torch.Tensor) -> torch.Tensor:
+    """
+    The L2 penalty, as the negative log density of the prior `get_prior_precision` describes.
+
+    A Gaussian prior of covariance `Sigma` contributes `0.5 * t(theta) %*% inv(Sigma) %*% theta`,
+    which for a one-dimensional prior reduces to `lambda * lfc^2` with
+    `lambda = 1 / (2 * sigma^2)`. Here `theta` is one design column's three parametrized ratios at
+    one intron, so the penalty sums over design columns and introns.
+
+    The initiation LFC has no intron axis, so it enters once per intron of the gene. That matches
+    how the prior was fitted, where a (gene, intron) pair is the unit and the gene's initiation
+    estimate is broadcast onto each of its introns.
+
+    `IntronCoverageModel` needs none of this: its ratio space is one-dimensional, so its prior has
+    no covariance to invert and the penalty stays the plain `lambda * lfc^2` term in
+    `_make_intron_coverage_closures`.
+    """
+    # The width of the elongation and splicing LFCs' second axis: the introns when those LFCs are
+    # intron-specific, and a broadcasting singleton when they are shared across the gene. It has to
+    # come from the parameter rather than from `len(model.intron_names)`, which would be wrong in
+    # the shared case and would try to expand initiation against a width-one axis.
+    num_lfc_introns = model.lfc_elong_over_deg.shape[1]
+    # (num_features, num_lfc_introns, 3), the three basis ratios per design column and intron
+    lfc_per_basis_ratio = torch.stack(
+        [model.lfc_init_over_deg.unsqueeze(1).expand(-1, num_lfc_introns),
+         model.lfc_elong_over_deg,
+         model.lfc_splice_over_deg], dim=2)
+    # One batched matmul per design column, then the elementwise product summed, which is
+    # sum over design columns and introns of t(lfc) %*% prior_precision %*% lfc.
+    precision_times_lfc = lfc_per_basis_ratio @ prior_precision
+    return 0.5 * torch.sum(precision_times_lfc * lfc_per_basis_ratio)
+
+
 def _make_rna_kinetics_closures(
         model: RNAKineticsModel,
         optimizer: optim.Optimizer,
         gene_data: GeneData,
         dataset_metadata: DatasetMetadata,
         reduced_matrix: Optional[torch.Tensor] = None,
-        regularization_coefficients_elong_over_deg: Optional[torch.Tensor] = None,
-        regularization_coefficients_splice_over_deg: Optional[torch.Tensor] = None,
+        prior_precision: Optional[torch.Tensor] = None,
 ) -> tuple[Callable[[], torch.Tensor], Callable[[], torch.Tensor]]:
     rna_kinetics_loss = RNAKineticsLoss(
         num_position_coverage=gene_data.coverage.shape[2]
@@ -480,10 +549,8 @@ def _make_rna_kinetics_closures(
             predicted_reads_intron=predicted_reads_intron,
             predicted_pi=predicted_pi,
         )
-        if regularization_coefficients_elong_over_deg is not None:
-            loss += torch.sum(regularization_coefficients_elong_over_deg * torch.square(model.lfc_elong_over_deg))
-        if regularization_coefficients_splice_over_deg is not None:
-            loss += torch.sum(regularization_coefficients_splice_over_deg * torch.square(model.lfc_splice_over_deg))
+        if prior_precision is not None:
+            loss += get_prior_penalty(model, prior_precision)
         return loss
 
     return _make_closures(optimizer, _compute_loss)
@@ -1064,26 +1131,18 @@ def get_regularized_rna_kinetics_model_results(gene_data: GeneData,
                                                ) -> pd.DataFrame:
     gene_data = gene_data.to(device)
     dataset_metadata = dataset_metadata.to(device)
-    regularization_coefficients_df = regularization_coefficients_df.set_index(['parameter_type', 'feature_name'])
-
     model_regularized = RNAKineticsModel(feature_names=dataset_metadata.feature_names,
                                          intron_names=gene_data.intron_names,
                                          intron_specific_lfc=intron_specific_lfc).to(device)
     model_regularized.load_state_dict(hot_start_state_dict)
 
-    regularization_coefficients_elong_over_deg = torch.zeros((len(model_regularized.feature_names), 1)).to(device)
-    regularization_coefficients_splice_over_deg = torch.zeros((len(model_regularized.feature_names), 1)).to(device)
-    for feature_index, feature_name in enumerate(model_regularized.feature_names):
-        regularization_coefficients_elong_over_deg[feature_index] = regularization_coefficients_df.loc[
-            (LFCParameter.ELONG_OVER_DEG, feature_name)]['lambda']
-        regularization_coefficients_splice_over_deg[feature_index] = regularization_coefficients_df.loc[
-            (LFCParameter.SPLICE_OVER_DEG, feature_name)]['lambda']
+    prior_precision = get_prior_precision(regularization_coefficients_df,
+                                          model_regularized.feature_names, device)
 
     optimizer_regularized = make_lbfgs_optimizer(model_regularized)
     closure_regularized, evaluate_loss_regularized = _make_rna_kinetics_closures(
         model_regularized, optimizer_regularized, gene_data, dataset_metadata,
-        regularization_coefficients_elong_over_deg=regularization_coefficients_elong_over_deg,
-        regularization_coefficients_splice_over_deg=regularization_coefficients_splice_over_deg,
+        prior_precision=prior_precision,
     )
     model_regularized, training_results_regularized = train_model(
         model_regularized, optimizer_regularized, closure_regularized, evaluate_loss_regularized,
