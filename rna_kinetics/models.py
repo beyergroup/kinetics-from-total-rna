@@ -43,7 +43,7 @@ class TestedRatio(StrEnum):
     three are differences of two parameters, which is well-defined because every parameter is a
     ratio against degradation, so the degradation term cancels in the difference.
 
-    The values are the LFC attribute names, and are written verbatim to the `tested_parameter`
+    The values are the LFC attribute names, and are written verbatim to the `rate_ratio`
     column of the test results and on into the volcano plot paths. The three ratios that are not
     parameters have no attribute of their own, but are named the same way.
     """

@@ -115,7 +115,7 @@ build_fit_table <- function(df_feature) {
   }
   for (ratio_name in names(CONTRAST)) {
     one_ratio <- df_feature |>
-      filter(ratio == ratio_name) |>
+      filter(rate_ratio == ratio_name) |>
       transmute(gene_name,
                 intron_name,
                 !!paste0("lfc_of_", ratio_name) := if_else(usable, lfc, NA_real_),
@@ -190,7 +190,7 @@ estimate_prior_for_feature <- function(df_feature) {
                    num_pairs_dropped = prepared$num_pairs_dropped)
   uninformative <- function(ratio_names, status) {
     tibble(feature_name = feature,
-           parameter_type = ratio_names,
+           rate_ratio = ratio_names,
            prior_sd = sqrt(UNINFORMATIVE_PRIOR_VARIANCE),
            tau = NA_real_,
            mu = NA_real_,
@@ -235,7 +235,7 @@ estimate_prior_for_feature <- function(df_feature) {
     covariance_with_basis <- set_names(rep(NA_real_, length(BASIS)), BASIS)
     covariance_with_basis[fitted_index] <- as.numeric(fitted_contrast %*% prior_covariance)
     tibble(feature_name = feature,
-           parameter_type = ratio_name,
+           rate_ratio = ratio_name,
            prior_sd = sqrt(as.numeric(t(fitted_contrast) %*% prior_covariance %*% fitted_contrast)),
            tau = sqrt(as.numeric(t(fitted_contrast) %*% between_gene_covariance %*% fitted_contrast)),
            mu = sum(fitted_contrast * pooled_mean),
@@ -255,10 +255,10 @@ estimate_prior_for_feature <- function(df_feature) {
 # One prior per ratio, for an input with no joint structure to fit over.
 estimate_priors_one_ratio_at_a_time <- function(df_feature) {
   feature <- df_feature$feature_name[1]
-  map_dfr(sort(unique(df_feature$ratio)), function(ratio_name) {
-    usable <- df_feature |> filter(ratio == ratio_name, usable)
+  map_dfr(sort(unique(df_feature$rate_ratio)), function(ratio_name) {
+    usable <- df_feature |> filter(rate_ratio == ratio_name, usable)
     row <- tibble(feature_name = feature,
-                  parameter_type = ratio_name,
+                  rate_ratio = ratio_name,
                   prior_sd = sqrt(UNINFORMATIVE_PRIOR_VARIANCE),
                   tau = NA_real_,
                   mu = NA_real_,
@@ -267,7 +267,7 @@ estimate_priors_one_ratio_at_a_time <- function(df_feature) {
                   prior_cov_splice_over_deg = NA_real_,
                   status = "no_usable_estimates",
                   num_units_used = nrow(usable),
-                  num_units_total = sum(df_feature$ratio == ratio_name),
+                  num_units_total = sum(df_feature$rate_ratio == ratio_name),
                   num_estimates_used = nrow(usable),
                   num_pairs_dropped = 0L)
     if (nrow(usable) < MIN_UNITS_FOR_FIT) {
@@ -291,7 +291,7 @@ estimate_priors_one_ratio_at_a_time <- function(df_feature) {
   })
 }
 
-estimate_priors_for_feature <- if (all(BASIS %in% unique(ratio_lfcs$ratio))) {
+estimate_priors_for_feature <- if (all(BASIS %in% unique(ratio_lfcs$rate_ratio))) {
   estimate_prior_for_feature
 } else {
   estimate_priors_one_ratio_at_a_time
@@ -301,9 +301,9 @@ regularization_coefficients_df <- ratio_lfcs |>
   group_split(feature_name) |>
   map_dfr(estimate_priors_for_feature) |>
   mutate(lambda = 1 / (2 * prior_sd^2)) |>
-  select(parameter_type, feature_name, prior_sd, lambda, tau, mu,
+  select(rate_ratio, feature_name, prior_sd, lambda, tau, mu,
          starts_with("prior_cov_"), status, starts_with("num_")) |>
-  arrange(parameter_type, feature_name)
+  arrange(rate_ratio, feature_name)
 
 degenerate <- regularization_coefficients_df |>
   filter(status == "degenerate_prior") |>

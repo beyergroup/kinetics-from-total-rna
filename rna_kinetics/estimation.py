@@ -487,7 +487,7 @@ def get_prior_precision(regularization_coefficients_df: pd.DataFrame,
     column's per-ratio `lambda`, which penalises whatever directions were estimable and leaves the
     rest effectively free.
     """
-    coefficients = regularization_coefficients_df.set_index(['parameter_type', 'feature_name'])
+    coefficients = regularization_coefficients_df.set_index(['rate_ratio', 'feature_name'])
     precision = torch.zeros((len(feature_names), len(LFC_PRIOR_BASIS), len(LFC_PRIOR_BASIS)))
     covariance_columns = [f'prior_cov_{ratio.removeprefix("lfc_")}' for ratio in LFC_PRIOR_BASIS]
 
@@ -857,7 +857,7 @@ def get_ratio_lfc_df(model: nn.Module,
                                                  ratio_to_report.intron_index)
         for feature_index, feature_name in enumerate(model.feature_names):
             lfc = lfc_of_ratio[feature_index].item()
-            row = {'ratio': ratio_to_report.ratio,
+            row = {'rate_ratio': ratio_to_report.ratio,
                    'intron_name': ratio_to_report.intron_name,
                    'feature_name': feature_name,
                    'lfc': lfc}
@@ -1110,7 +1110,7 @@ def get_rna_kinetics_model_results(gene_data: GeneData,
             state_dict_model_full, lrt_specification.tested_ratio, tested_intron_index)
 
         test_result = lrt_input.lrt_metadata_row.to_dict()
-        test_result['tested_parameter'] = lrt_specification.tested_ratio
+        test_result['rate_ratio'] = lrt_specification.tested_ratio
         test_result['gene_name'] = gene_data.gene_name
         test_result['intron_name'] = lrt_specification.tested_intron
         test_result['training_diverged_reduced_model'] = results_reduced.training_diverged
@@ -1309,7 +1309,7 @@ def get_intron_coverage_model_results(
 
         chi2_stat = 2 * (results_reduced.final_loss - results_full.final_loss)
         test_result = lrt_row.to_dict()
-        test_result['tested_parameter'] = LFCParameter.ELONG_OVER_SPLICE
+        test_result['rate_ratio'] = LFCParameter.ELONG_OVER_SPLICE
         test_result['intron_name'] = lfc_intron_name
         test_result['lfc'] = (
                 get_lfc_of_column(lfc_elong_over_splice, feature_names,
@@ -1500,7 +1500,7 @@ def get_global_rna_kinetics_model_results(
 
         chi2_stat = 2 * (results_reduced.final_loss - training_results.final_loss)
         test_result = lrt_row.to_dict()
-        test_result['tested_parameter'] = lrt_specification.tested_ratio
+        test_result['rate_ratio'] = lrt_specification.tested_ratio
         test_result['lfc'] = (
                 get_lfc_of_column(lfc_of_tested_ratio, feature_names,
                                   lrt_row['lfc_column_positive'])
@@ -1530,7 +1530,7 @@ def get_regularized_intron_coverage_model_results(
 ) -> RegularizedFitResults:
     coverage = input_data.coverage.to(device)
     dataset_metadata = dataset_metadata.to(device)
-    regularization_coefficients_df = regularization_coefficients_df.set_index(['parameter_type', 'feature_name'])
+    regularization_coefficients_df = regularization_coefficients_df.set_index(['rate_ratio', 'feature_name'])
 
     model_regularized = IntronCoverageModel(
         feature_names=dataset_metadata.feature_names,

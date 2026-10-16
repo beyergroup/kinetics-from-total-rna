@@ -65,7 +65,7 @@ test_results <- read_tsv(args$test_results)
 lfc_of_column <- function(column) {
   test_results |>
     left_join(regularized_ratio_lfcs,
-              by = c("tested_parameter" = "ratio",
+              by = c("rate_ratio",
                      "gene_name",
                      "intron_name",
                      setNames("feature_name", column))) |>
