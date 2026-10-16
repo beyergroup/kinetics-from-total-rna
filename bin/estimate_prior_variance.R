@@ -61,8 +61,14 @@ if (!dir.exists(output_folder)) {
   dir.create(output_folder, recursive = TRUE)
 }
 
-# The basis the penalty acts on. The other three ratios are differences of these, so their priors
-# follow from the same matrix instead of being fitted.
+# The basis the penalty acts on when the input holds the per-gene model's ratios: the other three
+# are differences of these, so their priors follow from the same matrix instead of being fitted.
+#
+# An input that does not hold all three, such as the intron coverage model's single
+# lfc_elong_over_splice, has no such structure to exploit. The same name means different things in
+# the two models: a difference of two parameters in one, a parameter in its own right in the other.
+# Those inputs are therefore fitted one ratio at a time. Dispatching on what the input contains
+# rather than assuming is what keeps a coverage model from silently receiving no prior at all.
 BASIS <- c("lfc_init_over_deg", "lfc_elong_over_deg", "lfc_splice_over_deg")
 
 # Each remaining ratio as the pair of basis ratios it is the difference of. This is what turns the
@@ -246,9 +252,54 @@ estimate_prior_for_feature <- function(df_feature) {
   rows
 }
 
+# One prior per ratio, for an input with no joint structure to fit over.
+estimate_priors_one_ratio_at_a_time <- function(df_feature) {
+  feature <- df_feature$feature_name[1]
+  map_dfr(sort(unique(df_feature$ratio)), function(ratio_name) {
+    usable <- df_feature |> filter(ratio == ratio_name, usable)
+    row <- tibble(feature_name = feature,
+                  parameter_type = ratio_name,
+                  prior_sd = sqrt(UNINFORMATIVE_PRIOR_VARIANCE),
+                  tau = NA_real_,
+                  mu = NA_real_,
+                  prior_cov_init_over_deg = NA_real_,
+                  prior_cov_elong_over_deg = NA_real_,
+                  prior_cov_splice_over_deg = NA_real_,
+                  status = "no_usable_estimates",
+                  num_units_used = nrow(usable),
+                  num_units_total = sum(df_feature$ratio == ratio_name),
+                  num_estimates_used = nrow(usable),
+                  num_pairs_dropped = 0L)
+    if (nrow(usable) < MIN_UNITS_FOR_FIT) {
+      return(row)
+    }
+    fit <- tryCatch(mixmeta(usable$lfc, S = usable$lfc_se^2, method = "reml"),
+                    error = function(e) NULL)
+    if (is.null(fit)) {
+      return(row |> mutate(status = "fit_failed"))
+    }
+    between_gene_variance <- as.numeric(fit$Psi)
+    pooled_mean <- as.numeric(coef(fit))
+    # Named apart from the column it fills: inside mutate, a bare `prior_sd` would resolve to the
+    # column rather than to this value.
+    fitted_prior_sd <- sqrt(between_gene_variance + pooled_mean^2)
+    row |> mutate(tau = sqrt(between_gene_variance),
+                  mu = pooled_mean,
+                  prior_sd = fitted_prior_sd,
+                  status = if (!is.finite(fitted_prior_sd) || fitted_prior_sd <= 0)
+                    "degenerate_prior" else "ok")
+  })
+}
+
+estimate_priors_for_feature <- if (all(BASIS %in% unique(ratio_lfcs$ratio))) {
+  estimate_prior_for_feature
+} else {
+  estimate_priors_one_ratio_at_a_time
+}
+
 regularization_coefficients_df <- ratio_lfcs |>
   group_split(feature_name) |>
-  map_dfr(estimate_prior_for_feature) |>
+  map_dfr(estimate_priors_for_feature) |>
   mutate(lambda = 1 / (2 * prior_sd^2)) |>
   select(parameter_type, feature_name, prior_sd, lambda, tau, mu,
          starts_with("prior_cov_"), status, starts_with("num_")) |>
