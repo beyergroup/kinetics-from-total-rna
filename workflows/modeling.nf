@@ -3,11 +3,11 @@ process WriteDesignMetadata {
 
     input:
     val design_formula
-    val lrt_contrasts
+    val contrasts
 
     output:
     path "design.json"
-    path "lrt_contrasts.json", emit: lrt_contrasts_json
+    path "contrasts.json", emit: contrasts_json
 
     script:
     def design_obj = [
@@ -15,11 +15,11 @@ process WriteDesignMetadata {
     ]
 
     def design_json_str       = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(design_obj))
-    def lrt_contrasts_json_str = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(lrt_contrasts ?: []))
+    def contrasts_json_str = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(contrasts ?: []))
 
     """
     printf '%s\n' '${design_json_str}'        > design.json
-    printf '%s\n' '${lrt_contrasts_json_str}' > lrt_contrasts.json
+    printf '%s\n' '${contrasts_json_str}' > contrasts.json
     """
 }
 
@@ -31,7 +31,7 @@ process CreateDesignMatrices {
     input:
     path samplesheet
     val design_formula
-    path lrt_contrasts_json
+    path contrasts_json
 
     output:
     path("design_matrix.tsv"), emit: design_matrix
@@ -43,7 +43,7 @@ process CreateDesignMatrices {
     create_design_matrices.R \
     --samplesheet $samplesheet \
     --formula "$design_formula" \
-    --lrt_contrasts_json $lrt_contrasts_json
+    --contrasts_json $contrasts_json
     """
 }
 
@@ -731,7 +731,7 @@ workflow modeling_workflow {
         isoform_length_factors_input
         coverage_files_input
         design_formula
-        lrt_contrasts
+        contrasts
         modelable_genes_input
         modelable_introns_input
         fit_rna_kinetics_model
@@ -752,12 +752,12 @@ workflow modeling_workflow {
 
         StratifiedIntronMetacoveragePlots(stratified_plot_input, design_formula)
 
-        def design_metadata = WriteDesignMetadata(design_formula, lrt_contrasts)
+        def design_metadata = WriteDesignMetadata(design_formula, contrasts)
 
         def design_matrices_data = CreateDesignMatrices(
             samplesheet,
             design_formula,
-            design_metadata.lrt_contrasts_json
+            design_metadata.contrasts_json
         )
 
         def modeled_genes = GetModeledGenes(

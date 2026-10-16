@@ -34,7 +34,7 @@ fit_global_intron_coverage_model: true
 fit_gene_specific_intron_coverage_model: true
 fit_intron_specific_intron_coverage_model: false
 
-lrt_contrasts: # List of contrasts for likelihood ratio tests.
+contrasts: # List of contrasts for likelihood ratio tests.
   - variable: "your_categorical_variable_to_test" # For categorical variables, please specify groups (levels) that you want to compare
     group_1: "your_intervention_group"
     group_2: "your_control_group"

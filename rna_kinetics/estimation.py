@@ -1066,6 +1066,7 @@ def get_rna_kinetics_model_results(gene_data: GeneData,
     model_param_df['training_diverged_full_model'] = results_full.training_diverged
     model_param_df[
         'training_converged_within_max_epochs_full_model'] = results_full.converged_within_max_epochs
+    model_param_df['num_epochs_full_model'] = results_full.num_epochs
 
     # Wald test
     rna_kinetics_loss = RNAKineticsLoss(num_position_coverage=gene_data.coverage.shape[2]).to(device)
@@ -1116,6 +1117,7 @@ def get_rna_kinetics_model_results(gene_data: GeneData,
         test_result['training_diverged_reduced_model'] = results_reduced.training_diverged
         test_result[
             'training_converged_within_max_epochs_reduced_model'] = results_reduced.converged_within_max_epochs
+        test_result['num_epochs_reduced_model'] = results_reduced.num_epochs
         test_result['lfc'] = (
                 get_lfc_of_column(lfc_of_tested_ratio, feature_names,
                                   test_result['lfc_column_positive'])
@@ -1276,6 +1278,7 @@ def get_intron_coverage_model_results(
     model_param_df['loss_full_model'] = results_full.final_loss
     model_param_df['training_diverged_full_model'] = results_full.training_diverged
     model_param_df['training_converged_within_max_epochs_full_model'] = results_full.converged_within_max_epochs
+    model_param_df['num_epochs_full_model'] = results_full.num_epochs
 
     parameter_covariance: Optional[ParameterCovariance] = None
     if not is_global_model:
@@ -1331,7 +1334,6 @@ def get_intron_coverage_model_results(
         test_result['p_value'] = 1 - stats.chi2.cdf(chi2_stat, df=lrt_row['lrt_df'])
         test_result['training_diverged_reduced_model'] = results_reduced.training_diverged
         test_result['training_converged_within_max_epochs_reduced_model'] = results_reduced.converged_within_max_epochs
-        test_result['num_epochs_full_model'] = results_full.num_epochs
         test_result['num_epochs_reduced_model'] = results_reduced.num_epochs
         test_result['num_full_model_restarts'] = fits.num_full_model_restarts
         test_results_list.append(test_result)
@@ -1372,6 +1374,11 @@ def _make_global_rna_kinetics_closures(
     return _make_closures(optimizer, _compute_loss)
 
 
+# The global models train in two stages and can need many more epochs than a per-gene fit, which
+# `train_model` caps at its own, lower default.
+MAX_EPOCHS_TWO_STAGE = 1000
+
+
 def _train_two_stage(
         model: nn.Module,
         global_param_names: set[str],
@@ -1394,7 +1401,8 @@ def _train_two_stage(
             history_size=100, line_search_fn='strong_wolfe',
         )
         closure_stage_1, eval_stage_1 = make_closures(optimizer_stage_1)
-        model, _ = train_model(model, optimizer_stage_1, closure_stage_1, eval_stage_1, max_epochs=500, verbose=verbose)
+        model, _ = train_model(model, optimizer_stage_1, closure_stage_1, eval_stage_1,
+                               max_epochs=MAX_EPOCHS_TWO_STAGE, verbose=verbose)
 
     # Stage 2: unfreeze all, refine jointly from warm start
     if verbose:
@@ -1403,7 +1411,8 @@ def _train_two_stage(
         param.requires_grad_(True)
     optimizer_stage_2 = make_lbfgs_optimizer(model)
     closure_stage_2, eval_stage_2 = make_closures(optimizer_stage_2)
-    model, training_results = train_model(model, optimizer_stage_2, closure_stage_2, eval_stage_2, max_epochs=500,
+    model, training_results = train_model(model, optimizer_stage_2, closure_stage_2, eval_stage_2,
+                                          max_epochs=MAX_EPOCHS_TWO_STAGE,
                                           verbose=verbose)
     return model, training_results
 
@@ -1490,6 +1499,7 @@ def get_global_rna_kinetics_model_results(
     model_param_df['loss_full_model'] = training_results.final_loss
     model_param_df['training_diverged_full_model'] = training_results.training_diverged
     model_param_df['training_converged_within_max_epochs_full_model'] = training_results.converged_within_max_epochs
+    model_param_df['num_epochs_full_model'] = training_results.num_epochs
 
     full_state = model.state_dict()
     test_results_list: list[dict] = []
@@ -1513,7 +1523,6 @@ def get_global_rna_kinetics_model_results(
         test_result['training_diverged_reduced_model'] = results_reduced.training_diverged
         test_result[
             'training_converged_within_max_epochs_reduced_model'] = results_reduced.converged_within_max_epochs
-        test_result['num_epochs_full_model'] = training_results.num_epochs
         test_result['num_epochs_reduced_model'] = results_reduced.num_epochs
         test_result['num_full_model_restarts'] = fits.num_full_model_restarts
         test_results_list.append(test_result)

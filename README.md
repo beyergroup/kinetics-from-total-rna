@@ -39,15 +39,21 @@ at steady state, and the steady-state abundances constrain the kinetic rates onl
 other. If we scale all rates by a common factor, the predicted abundances stay the same, and
 therefore no individual rate can be identified.
 
-The pipeline reports the following parameters, using the same names as in the `parameter_type`
+The pipeline reports the following rate ratios, using the same names as in the `rate_ratio`
 column of the output:
 
-| Parameter | Interpretation |
+| Rate ratio | Interpretation |
 | --- | --- |
 | `lfc_init_over_deg` | LFC(initiation rate) − LFC(degradation rate) |
 | `lfc_elong_over_deg` | LFC(elongation speed) − LFC(degradation rate) |
 | `lfc_splice_over_deg` | LFC(splicing speed) − LFC(degradation rate) |
+| `lfc_init_over_elong` | LFC(initiation rate) − LFC(elongation speed) |
+| `lfc_init_over_splice` | LFC(initiation rate) − LFC(splicing speed) |
 | `lfc_elong_over_splice` | LFC(elongation speed) − LFC(splicing speed) |
+
+All six ratios of the four rates are tested. Three of them are parameters of the model; the other
+three are differences of two, which is well defined because every parameter is a ratio against
+degradation, so that term cancels.
 
 Therefore, a significant result tells us which pair of rates has changed relative to each other, but
 not which member of the pair is responsible for the change. For example, a positive
@@ -125,7 +131,8 @@ more data behind each estimate.
 
 The granularity also affects the content of the output. The per-gene and per-intron models perform
 an additional regularization step, in which the effect sizes are shrunk towards zero using an
-empirical Bayes prior fitted by [ashr](https://github.com/stephens999/ashr) across all genes; their
+empirical Bayes prior fitted across all genes by
+[mixmeta](https://cran.r-project.org/package=mixmeta); their
 ```test_results.tsv``` file therefore contains both `l2fc_unregularized` and `l2fc_regularized`. The
 global models estimate a single effect, so there is nothing to fit the prior on, and no shrinkage is
 applied; their output contains a single estimate, `l2fc_mle`.
@@ -183,7 +190,7 @@ and filling it according to the comments. We will now discuss several parameter 
   see [R documentation](https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/formula) for details).
   The explanatory variables used in the formula need to be the columns of the ```samplesheet.csv```.
 * **LRT contrasts**: We are using likelihood-ratio tests to assess the significance of LFC parameters. The parameter
-  *lrt_contrasts* specifies a list of tests that are going to be performed.
+  *contrasts* specifies a list of tests that are going to be performed.
 
   For categorical variables, please specify (for each test) the *variable* (name of the column in the samplesheet), and 
   comparison groups *group_1* and *group_2* (levels of the variable). The null hypothesis being tested is whether the LFC
@@ -192,7 +199,7 @@ and filling it according to the comments. We will now discuss several parameter 
   For example, assume that the samplesheet contains column *genotype*, with levels *wild_type*, *knockout_1*, and *knockout_2*.
   To test whether each of the knockout group is different from the wild-type, you can specify:
   ```
-  lrt_contrasts:
+  contrasts:
   - variable: 'genotype'
     group_1: 'knockout_1'
     group_2: 'wild_type'

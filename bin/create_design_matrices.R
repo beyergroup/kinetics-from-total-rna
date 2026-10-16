@@ -9,7 +9,7 @@ parser$add_argument("--samplesheet", required = TRUE,
                     help = "CSV with sample annotation. Must include a 'sample' column.")
 parser$add_argument("--formula", required = TRUE,
                     help = "Design formula using standard R syntax (e.g. '~ age + genotype').")
-parser$add_argument("--lrt_contrasts_json", required = TRUE,
+parser$add_argument("--contrasts_json", required = TRUE,
                     help = "JSON file with LRT contrasts.")
 parser$add_argument("--output_folder", default = ".",
                     help = "Where to write design matrices and metadata.")
@@ -27,7 +27,7 @@ if (!"sample" %in% names(samplesheet)) {
   stop("samplesheet must contain a column named 'sample'.")
 }
 
-lrt_contrasts <- fromJSON(args$lrt_contrasts_json, simplifyVector = FALSE)
+contrasts <- fromJSON(args$contrasts_json, simplifyVector = FALSE)
 
 design_formula <- as.formula(args$formula)
 terms_full <- terms(design_formula)
@@ -54,12 +54,12 @@ lrt_metadata <- tibble(
   lfc_column_negative = character()   # optional
 )
 
-if (length(lrt_contrasts) == 0) {
+if (length(contrasts) == 0) {
   warning("No LRT specification provided, creating only design matrix to estimate effect sizes.")
 }
 
-for (i in seq_along(lrt_contrasts)) {
-  test_dict <- lrt_contrasts[[i]]
+for (i in seq_along(contrasts)) {
+  test_dict <- contrasts[[i]]
   variable_name <- as.character(test_dict$variable)
   group_1 <- if ("group_1" %in% names(test_dict)) as.character(test_dict$group_1) else NULL
   group_2 <- if ("group_2" %in% names(test_dict)) as.character(test_dict$group_2) else NULL

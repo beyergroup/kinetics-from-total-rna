@@ -84,7 +84,7 @@ workflow {
         }
 
 
-        def lrt_contrasts = params.lrt_contrasts ?: []
+        def contrasts = params.contrasts ?: []
 
         modeling_workflow(
             params.samplesheet,
@@ -96,7 +96,7 @@ workflow {
             isoform_length_factors,
             coverage_files,
             params.design_formula,
-            lrt_contrasts,
+            contrasts,
             modelable_genes,
             modelable_introns,
             params.fit_rna_kinetics_model,
