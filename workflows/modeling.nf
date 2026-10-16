@@ -289,11 +289,11 @@ process MergeModelResultChunks {
 }
 
 
-process AdaptiveShrinkage {
+process EstimatePriorVariance {
     publishDir { "${params.outdir}/modeling/${params.model_run_id}/${model_type_subfolder}" }, mode: 'copy'
 
     input:
-    path model_parameters
+    path ratio_lfcs
     val model_type_subfolder
 
     output:
@@ -301,8 +301,8 @@ process AdaptiveShrinkage {
 
     script:
     """
-    adaptive_shrinkage.R \
-    --model_parameters $model_parameters
+    estimate_prior_variance.R \
+    --ratio_lfcs $ratio_lfcs
     """
 }
 
@@ -453,11 +453,11 @@ workflow rna_kinetics_model_subworkflow {
             model_subfolder
         )
 
-        def adaptive_shrinkage_out = AdaptiveShrinkage(model_result_merged.model_parameters, model_subfolder)
+        def prior_variance_out = EstimatePriorVariance(model_result_merged.ratio_lfcs, model_subfolder)
 
         def fit_regularized_model_output = FitRegularizedModel(
             fit_model_output.cache_for_regularization
-                .combine(adaptive_shrinkage_out.regularization_coefficients)
+                .combine(prior_variance_out.regularization_coefficients)
         )
 
         def merge_regularization_output = MergeRegularization(
@@ -510,11 +510,11 @@ workflow intron_specific_rna_kinetics_model_subworkflow {
             model_subfolder
         )
 
-        def adaptive_shrinkage_out = AdaptiveShrinkage(model_result_merged.model_parameters, model_subfolder)
+        def prior_variance_out = EstimatePriorVariance(model_result_merged.ratio_lfcs, model_subfolder)
 
         def fit_regularized_model_output = FitRegularizedModel(
             fit_model_output.cache_for_regularization
-                .combine(adaptive_shrinkage_out.regularization_coefficients)
+                .combine(prior_variance_out.regularization_coefficients)
         )
 
         def merge_regularization_output = MergeRegularization(
@@ -566,11 +566,11 @@ workflow gene_specific_intron_coverage_model_subworkflow {
             model_subfolder
         )
 
-        def adaptive_shrinkage_out = AdaptiveShrinkage(model_result_merged.model_parameters, model_subfolder)
+        def prior_variance_out = EstimatePriorVariance(model_result_merged.ratio_lfcs, model_subfolder)
 
         def fit_regularized_model_output = FitRegularizedIntronCoverageModel(
             fit_model_output.cache_for_regularization
-                .combine(adaptive_shrinkage_out.regularization_coefficients)
+                .combine(prior_variance_out.regularization_coefficients)
         )
 
         def merge_regularization_output = MergeRegularization(
@@ -614,11 +614,11 @@ workflow intron_specific_intron_coverage_model_subworkflow {
             model_subfolder
         )
 
-        def adaptive_shrinkage_out = AdaptiveShrinkage(model_result_merged.model_parameters, model_subfolder)
+        def prior_variance_out = EstimatePriorVariance(model_result_merged.ratio_lfcs, model_subfolder)
 
         def fit_regularized_model_output = FitRegularizedIntronCoverageModel(
             fit_model_output.cache_for_regularization
-                .combine(adaptive_shrinkage_out.regularization_coefficients)
+                .combine(prior_variance_out.regularization_coefficients)
         )
 
         def merge_regularization_output = MergeRegularization(
