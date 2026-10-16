@@ -51,6 +51,20 @@ class ModelFitResults(NamedTuple):
     state_dict_full_model: StateDict
 
 
+class RegularizedFitResults(NamedTuple):
+    """
+    What one regularized refit reports.
+
+    `ratio_lfcs` matches the shape the unregularized fit emits, minus the standard errors: the
+    Hessian of a penalized objective is not an information matrix. It exists so that the
+    regularized effect size of every rate ratio can be joined onto the test results directly,
+    rather than rebuilt downstream from the parameter table, which has no row for the three ratios
+    that are not parameters.
+    """
+    model_parameters: pd.DataFrame
+    ratio_lfcs: pd.DataFrame
+
+
 class LRTInputs(NamedTuple):
     """
     Everything needed to run and report one likelihood ratio test.
@@ -816,7 +830,8 @@ class RatioToReport(NamedTuple):
 
 def get_ratio_lfc_df(model: nn.Module,
                      parameter_covariance: Optional[ParameterCovariance],
-                     ratios_to_report: list[RatioToReport]) -> pd.DataFrame:
+                     ratios_to_report: list[RatioToReport],
+                     with_standard_errors: bool = True) -> pd.DataFrame:
     """
     Every rate ratio's LFC per design column, with its Wald standard error.
 
@@ -829,6 +844,11 @@ def get_ratio_lfc_df(model: nn.Module,
 
     z scores and p values are deliberately left out: a per-column Wald test is not a result the
     pipeline reports, and the tested comparisons already carry theirs in the test results.
+
+    `with_standard_errors` is a property of the caller rather than of `parameter_covariance`, so
+    that one gene whose Hessian came out non-finite cannot give its chunk a different set of
+    columns from the rest. The regularized refit passes False: the Hessian of a penalized
+    objective is not an information matrix, so it has no standard error to report.
     """
     state_dict = model.state_dict()
     rows: list[dict] = []
@@ -836,18 +856,20 @@ def get_ratio_lfc_df(model: nn.Module,
         lfc_of_ratio = get_lfc_of_lfc_difference(state_dict, ratio_to_report.lfc_difference,
                                                  ratio_to_report.intron_index)
         for feature_index, feature_name in enumerate(model.feature_names):
-            contrast = get_contrast_of_ratio(model, ratio_to_report.lfc_difference,
-                                             lfc_column_positive=feature_name,
-                                             lfc_column_negative=np.nan,
-                                             intron_index=ratio_to_report.intron_index)
             lfc = lfc_of_ratio[feature_index].item()
-            wald_results = get_contrast_wald_results(parameter_covariance, contrast, lfc)
-            rows.append({'ratio': ratio_to_report.ratio,
-                         'intron_name': ratio_to_report.intron_name,
-                         'feature_name': feature_name,
-                         'lfc': lfc,
-                         'lfc_se': wald_results['lfc_se'],
-                         'lfc_identifiable': wald_results['lfc_identifiable']})
+            row = {'ratio': ratio_to_report.ratio,
+                   'intron_name': ratio_to_report.intron_name,
+                   'feature_name': feature_name,
+                   'lfc': lfc}
+            if with_standard_errors:
+                contrast = get_contrast_of_ratio(model, ratio_to_report.lfc_difference,
+                                                 lfc_column_positive=feature_name,
+                                                 lfc_column_negative=np.nan,
+                                                 intron_index=ratio_to_report.intron_index)
+                wald_results = get_contrast_wald_results(parameter_covariance, contrast, lfc)
+                row['lfc_se'] = wald_results['lfc_se']
+                row['lfc_identifiable'] = wald_results['lfc_identifiable']
+            rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -1128,7 +1150,7 @@ def get_regularized_rna_kinetics_model_results(gene_data: GeneData,
                                                hot_start_state_dict: StateDict,
                                                regularization_coefficients_df: pd.DataFrame,
                                                device='cpu'
-                                               ) -> pd.DataFrame:
+                                               ) -> RegularizedFitResults:
     gene_data = gene_data.to(device)
     dataset_metadata = dataset_metadata.to(device)
     model_regularized = RNAKineticsModel(feature_names=dataset_metadata.feature_names,
@@ -1154,7 +1176,17 @@ def get_regularized_rna_kinetics_model_results(gene_data: GeneData,
     model_param_df['training_diverged_regularized_model'] = training_results_regularized.training_diverged
     model_param_df[
         'training_converged_within_max_epochs_regularized_model'] = training_results_regularized.converged_within_max_epochs
-    return model_param_df
+
+    ratio_lfc_df = get_ratio_lfc_df(
+        model_regularized, parameter_covariance=None, with_standard_errors=False,
+        ratios_to_report=[RatioToReport(ratio=tested_ratio,
+                                        lfc_difference=RATIO_AS_LFC_DIFFERENCE[tested_ratio],
+                                        intron_name=intron_name,
+                                        intron_index=intron_index)
+                          for tested_ratio, intron_name, intron_index
+                          in _iter_reported_ratios(gene_data.intron_names, intron_specific_lfc)])
+    ratio_lfc_df['gene_name'] = gene_data.gene_name
+    return RegularizedFitResults(model_parameters=model_param_df, ratio_lfcs=ratio_lfc_df)
 
 
 def get_intron_coverage_model_results(
@@ -1495,7 +1527,7 @@ def get_regularized_intron_coverage_model_results(
         hot_start_state_dict: StateDict,
         regularization_coefficients_df: pd.DataFrame,
         device: str = 'cpu',
-) -> pd.DataFrame:
+) -> RegularizedFitResults:
     coverage = input_data.coverage.to(device)
     dataset_metadata = dataset_metadata.to(device)
     regularization_coefficients_df = regularization_coefficients_df.set_index(['parameter_type', 'feature_name'])
@@ -1526,4 +1558,14 @@ def get_regularized_intron_coverage_model_results(
     model_param_df['training_diverged_regularized_model'] = training_results_regularized.training_diverged
     model_param_df[
         'training_converged_within_max_epochs_regularized_model'] = training_results_regularized.converged_within_max_epochs
-    return model_param_df
+
+    # One intron means the shared LFC is that intron's, so it is reported under its name -- the
+    # same rule `IntronCoverageModel.get_param_df` follows.
+    lfc_intron_name = (input_data.intron_names[0] if len(input_data.intron_names) == 1 else None)
+    ratio_lfc_df = get_ratio_lfc_df(
+        model_regularized, parameter_covariance=None, with_standard_errors=False,
+        ratios_to_report=[RatioToReport(ratio=LFCParameter.ELONG_OVER_SPLICE,
+                                        lfc_difference=(LFCParameter.ELONG_OVER_SPLICE, None),
+                                        intron_name=lfc_intron_name)])
+    ratio_lfc_df['gene_name'] = input_data.gene_name
+    return RegularizedFitResults(model_parameters=model_param_df, ratio_lfcs=ratio_lfc_df)

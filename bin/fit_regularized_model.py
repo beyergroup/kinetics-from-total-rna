@@ -40,7 +40,7 @@ if __name__ == "__main__":
                                           map_location=device)
     dataset_metadata = cache_for_regularization.dataset_metadata
     intron_specific_lfc = cache_for_regularization.intron_specific_lfc
-    regularized_model_params_list: list[pd.DataFrame] = [
+    result_list = [
         get_regularized_rna_kinetics_model_results(gene_data=gene_data,
                                                    dataset_metadata=dataset_metadata,
                                                    intron_specific_lfc=intron_specific_lfc,
@@ -48,8 +48,10 @@ if __name__ == "__main__":
                                                    regularization_coefficients_df=regularization_coefficients_df,
                                                    device=device)
         for gene_data, model_state_dict in tqdm(cache_for_regularization.training_input_per_gene)]
-    all_regularized_model_param_df = pd.concat(regularized_model_params_list).reset_index(drop=True)
 
-    all_regularized_model_param_df.to_csv(output_folder / f"regularized_model_parameters{args.output_name_suffix}.tsv",
-                                          sep='\t',
-                                          index=False)
+    pd.concat([result.model_parameters for result in result_list]).reset_index(drop=True).to_csv(
+        output_folder / f"regularized_model_parameters{args.output_name_suffix}.tsv",
+        sep='\t', index=False)
+    pd.concat([result.ratio_lfcs for result in result_list]).reset_index(drop=True).to_csv(
+        output_folder / f"regularized_ratio_lfcs{args.output_name_suffix}.tsv",
+        sep='\t', index=False)

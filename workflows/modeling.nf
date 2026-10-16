@@ -316,6 +316,7 @@ process FitRegularizedModel {
 
     output:
     path("regularized_model_parameters*.tsv"), emit: regularized_model_parameters_chunk
+    path("regularized_ratio_lfcs*.tsv"), emit: regularized_ratio_lfcs_chunk
 
 //     publishDir "${params.outdir}/modeling/${params.model_run_id}/processing_chunks/regularized_model_results_chunks/${chunk_name}", mode: 'copy'
 
@@ -339,6 +340,7 @@ process FitRegularizedIntronCoverageModel {
 
     output:
     path("regularized_model_parameters*.tsv"), emit: regularized_model_parameters_chunk
+    path("regularized_ratio_lfcs*.tsv"), emit: regularized_ratio_lfcs_chunk
 
     script:
     """
@@ -356,6 +358,7 @@ process MergeRegularization {
     input:
     path test_results_before_regularization
     path regularized_model_parameters_chunks
+    path regularized_ratio_lfcs_chunks
     val model_type_subfolder
 
     output:
@@ -463,6 +466,7 @@ workflow rna_kinetics_model_subworkflow {
         def merge_regularization_output = MergeRegularization(
             model_result_merged.test_results_before_regularization,
             fit_regularized_model_output.regularized_model_parameters_chunk.collect(),
+            fit_regularized_model_output.regularized_ratio_lfcs_chunk.collect(),
             model_subfolder
         )
 
@@ -520,6 +524,7 @@ workflow intron_specific_rna_kinetics_model_subworkflow {
         def merge_regularization_output = MergeRegularization(
             model_result_merged.test_results_before_regularization,
             fit_regularized_model_output.regularized_model_parameters_chunk.collect(),
+            fit_regularized_model_output.regularized_ratio_lfcs_chunk.collect(),
             model_subfolder
         )
 
@@ -576,6 +581,7 @@ workflow gene_specific_intron_coverage_model_subworkflow {
         def merge_regularization_output = MergeRegularization(
             model_result_merged.test_results_before_regularization,
             fit_regularized_model_output.regularized_model_parameters_chunk.collect(),
+            fit_regularized_model_output.regularized_ratio_lfcs_chunk.collect(),
             model_subfolder
         )
 
@@ -624,6 +630,7 @@ workflow intron_specific_intron_coverage_model_subworkflow {
         def merge_regularization_output = MergeRegularization(
             model_result_merged.test_results_before_regularization,
             fit_regularized_model_output.regularized_model_parameters_chunk.collect(),
+            fit_regularized_model_output.regularized_ratio_lfcs_chunk.collect(),
             model_subfolder
         )
 
