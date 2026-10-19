@@ -182,12 +182,34 @@ estimate_prior_for_feature <- function(df_feature) {
   fit_table <- build_fit_table(df_feature)
   prepared <- build_estimates_and_covariances(fit_table)
   estimates <- prepared$estimates
+
+  # mixmeta factorises every unit's sampling covariance, so one unit whose block is not positive
+  # definite stops the fit for the whole design column. The reconstruction above is exact only
+  # while the inverse Fisher information behind it is a covariance matrix, which a fit that
+  # stopped away from a maximum of the likelihood does not give. Those units are dropped rather
+  # than repaired, because the values they carry are not valid estimates of a standard error. The
+  # test is the factorisation itself, since no bound on the entries detects it: the block can have
+  # every variance comfortably positive and every pairwise correlation below one and still not be
+  # a covariance matrix.
+  block_is_positive_definite <- function(unit) {
+    present <- which(!is.na(estimates[unit, ]))
+    if (length(present) == 0) {
+      return(TRUE)
+    }
+    block <- prepared$sampling_covariances[[unit]][present, present, drop = FALSE]
+    !inherits(try(chol(block), silent = TRUE), "try-error")
+  }
+  keep <- vapply(seq_len(nrow(estimates)), block_is_positive_definite, logical(1))
+  estimates <- estimates[keep, , drop = FALSE]
+  prepared$sampling_covariances <- prepared$sampling_covariances[keep]
+
   is_fittable <- colSums(!is.na(estimates)) >= MIN_UNITS_FOR_FIT
 
   counts <- tibble(num_units_used = sum(rowSums(!is.na(estimates)) > 0),
                    num_units_total = nrow(fit_table),
                    num_estimates_used = sum(!is.na(estimates)),
-                   num_pairs_dropped = prepared$num_pairs_dropped)
+                   num_pairs_dropped = prepared$num_pairs_dropped,
+                   num_units_not_positive_definite = sum(!keep))
   uninformative <- function(ratio_names, status) {
     tibble(feature_name = feature,
            rate_ratio = ratio_names,
@@ -269,7 +291,10 @@ estimate_priors_one_ratio_at_a_time <- function(df_feature) {
                   num_units_used = nrow(usable),
                   num_units_total = sum(df_feature$rate_ratio == ratio_name),
                   num_estimates_used = nrow(usable),
-                  num_pairs_dropped = 0L)
+                  num_pairs_dropped = 0L,
+                  # Each unit's sampling covariance is a single positive variance here, so there is
+                  # no block that can fail to be positive definite.
+                  num_units_not_positive_definite = 0L)
     if (nrow(usable) < MIN_UNITS_FOR_FIT) {
       return(row)
     }

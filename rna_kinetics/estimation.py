@@ -674,13 +674,39 @@ class ParameterCovariance(NamedTuple):
     num_parameters: int
 
 
+def is_positive_definite(matrix: torch.Tensor) -> bool:
+    """
+    Whether a symmetric matrix is positive definite, to the tolerance the rank test uses.
+
+    The tolerance is the one `torch.linalg.matrix_rank` applies, so a single notion of
+    "numerically zero" covers both checks, and an eigenvalue small enough to be rounding noise is
+    not read as negative curvature.
+    """
+    eigenvalues = torch.linalg.eigvalsh(matrix)
+    tolerance = (matrix.shape[0] * torch.finfo(matrix.dtype).eps
+                 * eigenvalues.abs().max())
+    return bool(eigenvalues[0] > -tolerance)
+
+
 def get_parameter_covariance(
         fisher_information_matrix: torch.Tensor) -> Optional[ParameterCovariance]:
     """
     Invert the Fisher information on the subspace where it has full rank.
 
-    None when it has non-finite entries, which leaves no Wald test at all, neither for the
-    individual parameters nor for a contrast of them.
+    None when the information has non-finite entries, and also when the subspace it is inverted on
+    is not positive definite. Either way there is no Wald test at all, neither for the individual
+    parameters nor for a contrast of them.
+
+    Positive definiteness is a separate question from rank, and has to be asked separately: rank is
+    decided on the magnitude of the eigenvalues, so an indefinite matrix is full rank whenever none
+    of its eigenvalues is near zero. The information is the Hessian at the point the optimizer
+    stopped, and the optimizer stops on the gradient and the loss rather than on a second-order
+    condition, so that point can carry a direction of negative curvature. It is then not a maximum
+    of the likelihood, the parameters are not a maximum likelihood estimate, and the inverse is not
+    a covariance matrix -- a variance can come out negative, and a contrast's variance can fall
+    below what the variances of its terms allow. None of its entries is a standard error, including
+    the ones that look reasonable, which is why this rejects the whole fit rather than the
+    offending direction.
     """
     if not torch.isfinite(fisher_information_matrix).all().item():
         return None
@@ -693,8 +719,10 @@ def get_parameter_covariance(
     identifiable_indices = np.sort(qr_pivots[:rank])
     identifiable_subset = fisher_information_matrix[identifiable_indices][:, identifiable_indices]
 
-    # identifiable_subset should have a full rank by the way it is constructed:
-    # assert identifiable_subset.shape[0] == torch.linalg.matrix_rank(identifiable_subset)
+    # identifiable_subset has full rank by the way it is constructed, but full rank does not make
+    # it positive definite, and only the latter makes its inverse a covariance matrix.
+    if not is_positive_definite(identifiable_subset):
+        return None
 
     return ParameterCovariance(matrix=torch.linalg.pinv(identifiable_subset).cpu(),
                                rows=identifiable_indices,
@@ -702,16 +730,22 @@ def get_parameter_covariance(
 
 
 def add_wald_test_results(df_param: pd.DataFrame,
-                          parameter_covariance: Optional[ParameterCovariance]) -> pd.DataFrame:
+                          parameter_covariance: Optional[ParameterCovariance],
+                          fisher_information_matrix: torch.Tensor) -> pd.DataFrame:
     """
     Adds results of the Wald test to the dataframe with model parameters.
+
+    The information matrix is taken as well as the covariance built from it, so that the two
+    reasons a fit can have no Wald test at all are reported apart: a non-finite Hessian, and a
+    Hessian that is finite but not positive definite.
     """
     df_param = df_param.copy()
     df_param['SE'] = np.nan
     df_param['z_score'] = np.nan
     df_param['p_value_wald'] = np.nan
     df_param['identifiable'] = False
-    df_param['loss_hessian_is_finite'] = parameter_covariance is not None
+    df_param['loss_hessian_is_finite'] = torch.isfinite(fisher_information_matrix).all().item()
+    df_param['loss_hessian_is_positive_definite'] = parameter_covariance is not None
     if parameter_covariance is None:
         return df_param
 
@@ -719,8 +753,10 @@ def add_wald_test_results(df_param: pd.DataFrame,
         raise ValueError(f'Unexpected value of df_param.index: {df_param=}')
 
     identifiable_indices = parameter_covariance.rows
-    standard_errors = torch.sqrt(
-        torch.clamp(torch.diag(parameter_covariance.matrix), min=0.0)).numpy()
+    # No clamp on the variance: get_parameter_covariance only returns a positive definite matrix,
+    # so a negative here would be a bug, and a NaN standard error is how it should show up. Clamping
+    # it to zero would instead report an infinite z score and a p value of exactly zero.
+    standard_errors = torch.sqrt(torch.diag(parameter_covariance.matrix)).numpy()
 
     df_param['identifiable'] = df_param.index.isin(identifiable_indices)
     df_param.loc[identifiable_indices, 'SE'] = standard_errors
@@ -804,7 +840,8 @@ def get_contrast_wald_results(parameter_covariance: Optional[ParameterCovariance
     weights = torch.tensor([contrast[row] for row in rows],
                            dtype=parameter_covariance.matrix.dtype)
     variance = weights @ parameter_covariance.matrix[positions][:, positions] @ weights
-    standard_error = torch.sqrt(torch.clamp(variance, min=0.0)).item()
+    # Unclamped for the reason given in add_wald_test_results.
+    standard_error = torch.sqrt(variance).item()
 
     z_score = lfc / standard_error if standard_error > 0 else np.nan
     return {'lfc_se': standard_error,
@@ -1085,7 +1122,8 @@ def get_rna_kinetics_model_results(gene_data: GeneData,
 
     fisher_information_matrix = get_fisher_information_matrix(model_full, rna_kinetics_loss_by_params)
     parameter_covariance = get_parameter_covariance(fisher_information_matrix)
-    model_param_df = add_wald_test_results(model_param_df, parameter_covariance)
+    model_param_df = add_wald_test_results(model_param_df, parameter_covariance,
+                                           fisher_information_matrix)
 
     ratio_lfc_df = get_ratio_lfc_df(
         model_full, parameter_covariance,
@@ -1291,7 +1329,8 @@ def get_intron_coverage_model_results(
         fisher_information_matrix = get_fisher_information_matrix(model_full,
                                                                   intron_coverage_loss_by_params)
         parameter_covariance = get_parameter_covariance(fisher_information_matrix)
-        model_param_df = add_wald_test_results(model_param_df, parameter_covariance)
+        model_param_df = add_wald_test_results(model_param_df, parameter_covariance,
+                                               fisher_information_matrix)
 
     # A one-dimensional ratio space: the model's single LFC is itself a rate ratio, so this table
     # has one row per design column and no standard errors for the global model.
