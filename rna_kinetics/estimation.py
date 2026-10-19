@@ -682,6 +682,11 @@ def is_positive_definite(matrix: torch.Tensor) -> bool:
     "numerically zero" covers both checks, and an eigenvalue small enough to be rounding noise is
     not read as negative curvature.
     """
+    if matrix.shape[0] == 0:
+        # Rank zero leaves an empty subspace, which holds no direction that could carry negative
+        # curvature. Reporting it as positive definite keeps it on the path it already took, where
+        # every parameter comes out unidentifiable and nothing has a standard error.
+        return True
     eigenvalues = torch.linalg.eigvalsh(matrix)
     tolerance = (matrix.shape[0] * torch.finfo(matrix.dtype).eps
                  * eigenvalues.abs().max())
