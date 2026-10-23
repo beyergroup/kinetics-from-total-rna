@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -10,22 +9,7 @@ import torch
 from tqdm import tqdm
 
 from rna_kinetics.data import load_dataset_metadata
-from rna_kinetics.estimation import get_global_intron_coverage_model_results
-
-# --- Dev block: comment out when running via Nextflow ---
-# results_folder = Path('/home/jakub/Desktop/c_elegans_test/results/')
-# model_run_timestamp = 'model_run_26_Apr_2026_11_47_29'
-# sys.argv = [
-#     'fit_global_intron_coverage_model.py',
-#     '--modeled_introns', str(results_folder / f'modeling/{model_run_timestamp}/modeled_genes/modeled_introns.tsv'),
-#     '--design_matrix', str(results_folder / f'modeling/{model_run_timestamp}/design_matrices/design_matrix.tsv'),
-#     '--library_size_factors', str(results_folder / 'preprocessing/aggregated_counts/library_size_factors.tsv'),
-#     '--lrt_metadata', str(results_folder / f'modeling/{model_run_timestamp}/design_matrices/lrt_metadata.tsv'),
-#     '--reduced_matrices_folder', str(results_folder / f'modeling/{model_run_timestamp}/design_matrices/reduced_design_matrices'),
-#     '--coverage_data_folder', str(results_folder / 'preprocessing/rescaled_coverage/'),
-#     '--output_folder', '/home/jakub/Desktop/c_elegans_test/results/test_splicing_model/',
-# ]
-# --- End dev block ---
+from rna_kinetics.estimation import get_intron_coverage_model_results
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -83,14 +67,17 @@ if __name__ == "__main__":
         dtype=torch.float32,
     )
 
-    model_param_df, test_results_df = get_global_intron_coverage_model_results(
+    # No ratio_lfcs here: the global model is not regularized, and with no Fisher information
+    # there would be no standard error for the prior fit to use anyway.
+    results = get_intron_coverage_model_results(
         coverage=coverage,
         dataset_metadata=dataset_metadata,
         intron_names=intron_names,
+        is_global_model=True,
         verbose=True,
     )
 
-    model_param_df.reset_index(drop=True).to_csv(
+    results.model_parameters.to_csv(
         args.output_folder / 'model_parameters.tsv', sep='\t', index=False
     )
-    test_results_df.to_csv(args.output_folder / 'test_results.tsv', sep='\t', index=False)
+    results.test_results.to_csv(args.output_folder / 'test_results.tsv', sep='\t', index=False)

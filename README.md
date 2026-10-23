@@ -24,7 +24,7 @@ the [rna_kinetics](rna_kinetics) folder
 > finished, please use this README as the description of what the code actually does.
 >
 > The current draft of the manuscript is included in this repository as
-> [preprint_draft_2026-08-21.pdf](preprint_draft_2026-08-21.pdf). Please note that the draft is not
+> [preprint_draft_2026-10-20.pdf](preprint_draft_2026-10-20.pdf). Please note that the draft is not
 > finished, and several of its sections are only placeholders. However, the sections
 > *Dynamical Model of RNA Metabolism* and *Inference Model* are mostly complete; they describe the
 > underlying physical model of the RNA metabolism, and the inference model implemented in this
@@ -33,21 +33,32 @@ the [rna_kinetics](rna_kinetics) folder
 
 ## What the model estimates
 
-Every effect size reported by the pipeline is a log fold change (LFC) of a ratio of two rates, and
-never of a single rate. This is a consequence of the data we are using: total RNA-seq observes RNA
-at steady state, and the steady-state abundances constrain the kinetic rates only relative to each
-other. If we scale all rates by a common factor, the predicted abundances stay the same, and
-therefore no individual rate can be identified.
+Every effect size reported by the pipeline is a log fold change (LFC) of a ratio of two rates. This
+is a consequence of the data we are using: total RNA-seq observes RNA at steady state, and the
+steady-state abundances constrain the kinetic rates only relative to each other. If we scale all
+rates by a common factor, the predicted abundances stay the same, and therefore no individual rate
+can be identified.
 
-The pipeline reports the following parameters, using the same names as in the `parameter_type`
+The pipeline reports the following rate ratios, using the same names as in the `rate_ratio`
 column of the output:
 
-| Parameter | Interpretation |
+| Rate ratio | Interpretation |
 | --- | --- |
 | `lfc_init_over_deg` | LFC(initiation rate) − LFC(degradation rate) |
 | `lfc_elong_over_deg` | LFC(elongation speed) − LFC(degradation rate) |
 | `lfc_splice_over_deg` | LFC(splicing speed) − LFC(degradation rate) |
+| `lfc_init_over_elong` | LFC(initiation rate) − LFC(elongation speed) |
+| `lfc_init_over_splice` | LFC(initiation rate) − LFC(splicing speed) |
 | `lfc_elong_over_splice` | LFC(elongation speed) − LFC(splicing speed) |
+
+All six ratios of the four rates are tested. Only three of them can be independent: once three are
+known, the remaining three are differences of those. Which three the code carries as its parameters
+is an implementation detail, and any other choice of three would describe the same model. The RNA
+kinetics model uses the three ratios against the degradation rate, which makes the other three
+differences of two (for example `lfc_elong_over_splice` = `lfc_elong_over_deg` −
+`lfc_splice_over_deg`), while the intron coverage model parametrizes `lfc_elong_over_splice`
+directly, since that is the only ratio it can see. The ratios against the degradation rate are
+therefore a matter of convenience.
 
 Therefore, a significant result tells us which pair of rates has changed relative to each other, but
 not which member of the pair is responsible for the change. For example, a positive
@@ -59,10 +70,9 @@ elongation and the splicing speed.
 
 Some of these ratios also correspond to quantities that are used elsewhere. For example,
 `lfc_init_over_deg` is the LFC of the steady-state abundance, which is what a conventional
-differential expression analysis reports. Further ratios can be obtained by subtracting the
-parameters from each other: `lfc_init_over_deg` − `lfc_elong_over_deg` = LFC(initiation rate) −
-LFC(elongation speed) describes a change of the polymerase density along the gene body. However,
-only the four parameters listed in the table are currently covered by the likelihood-ratio tests.
+differential expression analysis reports, while `lfc_init_over_elong` describes a change of the
+polymerase density along the gene body. All six ratios are reported and tested directly, so none of
+them needs to be assembled by hand from the others.
 
 Note that `lfc_init_over_deg` is always estimated per gene, in all of our models. Some of the models
 estimate a single effect for the whole dataset instead of a per-gene one (these variants are
@@ -75,11 +85,16 @@ through the overall transcript abundance. The remaining ratios are not affected 
 are obtained from comparisons within a single gene (intron versus exon read counts, and the coverage
 profile along an intron), in which the library size cancels out; these within-gene signals are then
 pooled across genes to obtain a dataset-wide estimate. For this reason, the global RNA kinetics
-model tests only `lfc_elong_over_deg` and `lfc_splice_over_deg`.
+model tests the three ratios that do not involve the initiation rate: `lfc_elong_over_deg`,
+`lfc_splice_over_deg` and `lfc_elong_over_splice`.
 
 The effect sizes are always reported as log2 fold changes. Their significance is assessed by
 likelihood-ratio tests, with the null hypothesis that the corresponding LFC is equal to zero (see
-*LRT contrasts* below).
+*Contrasts* below). Each test is also accompanied by a Wald test of the same null hypothesis,
+computed from the Fisher information of the fitted model. The likelihood-ratio test is the primary
+and the more reliable of the two; the Wald test needs no additional model fit, so we report it as a
+cheap supplement. The two global models do not compute a Fisher information, and therefore report
+the likelihood-ratio test alone.
 
 ## Model variants
 
@@ -90,14 +105,14 @@ subfolder.
 The first aspect is which data are used by the model:
 
 * **RNA kinetics models** are fitted to the exon read counts, intron read counts and intron coverage
-  jointly. Since they also use the read counts, they can resolve all three parameters that are
-  referenced to the degradation rate (`lfc_init_over_deg`, `lfc_elong_over_deg` and
-  `lfc_splice_over_deg`).
-* **Intron coverage models** are fitted to the intron coverage only, and report a single parameter,
+  jointly. Since they also use the read counts, they can resolve all six rate ratios, apart from the
+  global variant, in which the ratios involving the initiation rate are not identifiable (see
+  above).
+* **Intron coverage models** are fitted to the intron coverage only, and report only
   `lfc_elong_over_splice`. The coverage along an intron is informative about the ratio of the
-  elongation and splicing speeds, and does not depend on the degradation rate at all. These models
-  are therefore simpler, but they do not estimate the three parameters that are referenced to the
-  degradation rate.
+  elongation and splicing speeds, and does not depend on the degradation rate or on the initiation
+  rate at all. These models are therefore simpler, but they say nothing about the remaining five
+  ratios.
 
 The second aspect is the granularity, i.e. how many introns share one estimated effect. A coarser
 granularity pools more data, and therefore has a higher statistical power; on the other hand, it
@@ -125,7 +140,8 @@ more data behind each estimate.
 
 The granularity also affects the content of the output. The per-gene and per-intron models perform
 an additional regularization step, in which the effect sizes are shrunk towards zero using an
-empirical Bayes prior fitted by [ashr](https://github.com/stephens999/ashr) across all genes; their
+empirical Bayes prior fitted across all genes by
+[mixmeta](https://cran.r-project.org/package=mixmeta); their
 ```test_results.tsv``` file therefore contains both `l2fc_unregularized` and `l2fc_regularized`. The
 global models estimate a single effect, so there is nothing to fit the prior on, and no shrinkage is
 applied; their output contains a single estimate, `l2fc_mle`.
@@ -182,8 +198,9 @@ and filling it according to the comments. We will now discuss several parameter 
 * **Design formula**: the parameter *design_formula* uses R syntax to generate a design matrix from the formula (
   see [R documentation](https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/formula) for details).
   The explanatory variables used in the formula need to be the columns of the ```samplesheet.csv```.
-* **LRT contrasts**: We are using likelihood-ratio tests to assess the significance of LFC parameters. The parameter
-  *lrt_contrasts* specifies a list of tests that are going to be performed.
+* **Contrasts**: The parameter *contrasts* specifies a list of tests that are going to be performed. Each of
+  them is assessed by a likelihood-ratio test, and, where the model provides a Fisher information, also by a
+  supplementary Wald test (see [What the model estimates](#what-the-model-estimates) above).
 
   For categorical variables, please specify (for each test) the *variable* (name of the column in the samplesheet), and 
   comparison groups *group_1* and *group_2* (levels of the variable). The null hypothesis being tested is whether the LFC
@@ -192,7 +209,7 @@ and filling it according to the comments. We will now discuss several parameter 
   For example, assume that the samplesheet contains column *genotype*, with levels *wild_type*, *knockout_1*, and *knockout_2*.
   To test whether each of the knockout group is different from the wild-type, you can specify:
   ```
-  lrt_contrasts:
+  contrasts:
   - variable: 'genotype'
     group_1: 'knockout_1'
     group_2: 'wild_type'
